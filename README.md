@@ -56,4 +56,26 @@ CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
 - 跨平台（macOS / Linux / Windows）
 - 随 Claude Code 退出自动清理代理
 
+通过 `npx block-cc claude` 运行起来后，日志会写到 `~/.config/block-cc/block-cc.log`里。
+
+## 避免启动提示
+
+如果你觉得这个提示很烦
+
+<img src="./logo/msg.png" width=700 />
+
+可以这样启动，在`~/.zshrc`里加上快捷方式：
+
+```
+alias block-cc='nocorrect npx block-cc'
+```
+
+然后这样启动：
+
+```
+block-cc claude
+```
+
+这样就更清净了！！
+
 > 纯学习探讨用
