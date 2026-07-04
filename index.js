@@ -53,8 +53,8 @@ function createLogger() {
     content += line + '\n';
 
     const lines = content.split('\n').filter(Boolean);
-    if (lines.length > 3000) {
-      content = lines.slice(-3000).join('\n') + '\n';
+    if (lines.length > 1500) {
+      content = lines.slice(-1500).join('\n') + '\n';
     }
 
     fs.writeFileSync(logPath, content);
