@@ -20,7 +20,9 @@ npx block-cc claude -c          # 等同于 claude -c
 
 ## 原理
 
-启动时会自动启动一个本地 HTTP CONNECT 代理，拦截以下域名的连接（包括不限于）：
+三层拦截，确保万无一失：
+
+**第一层：网络代理拦截** — 启动本地 HTTP CONNECT 代理，在 TLS 握手之前阻断以下域名：
 
 | 域名 | 拦截原因 |
 |------|----------|
@@ -28,17 +30,30 @@ npx block-cc claude -c          # 等同于 claude -c
 | `datadoghq.com` | Datadog 日志上报 |
 | `sentry.io` | 错误上报 |
 | `growthbook.io` | 特性开关 |
-| `claude.ai` | 官网域名查询 |
 | `api.anthropic.com` | 遥测、指标、配置同步、会话上传等 |
 
-阻断发生在 TLS 握手之前的 CONNECT 阶段，正常 API 请求和工具调用依赖的网络请求不受影响（前提是你的自定义 API 端点是独立域名）。
+**第二层：TLS MITM 精确拦截** — 对 `claude.ai` 进行 TLS 中间人，精确到 URL 路径：
 
-代理仅作用于 Claude Code 进程，不影响浏览器或其他应用。
+- `claude.ai/api/web/domain_info` → 本地返回 `{"domain":"...","can_fetch":true}`，请求不离开本机
+- `claude.ai` 其他所有路径 → 阻断
+
+首次运行自动生成本地 CA 证书，通过 `NODE_EXTRA_CA_CERTS` 让 Claude Code 自动信任，无需手动安装。
+
+**第三层：环境变量关闭** — 注入开关，从应用层禁用更新和反馈：
+
+```
+DISABLE_AUTOUPDATER=1
+CLAUDE_CODE_DISABLE_UPDATE_CHECK=1
+CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
+```
+
+代理和环境变量均仅作用于 Claude Code 进程，不影响浏览器或其他应用。
 
 ## 要求
 
 - Node.js >= 18
 - Claude Code 已安装
+- `openssl`（macOS/Linux 自带）
 
 ## 特点
 

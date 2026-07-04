@@ -6,6 +6,7 @@ const path = require('path');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
 const { createProxy } = require('./proxy');
+const { setupCA, getSecureContext } = require('./cert');
 
 const USAGE = 'Usage: npx block-cc claude';
 
@@ -72,21 +73,51 @@ function main() {
 
   const log = createLogger();
 
-  const proxy = createProxy({ log });
+  let caCertPath;
+  try {
+    const ca = setupCA();
+    caCertPath = ca.caCertPath;
+    if (ca.isNew) {
+      log('Generated local CA certificate for claude.ai MITM');
+    }
+  } catch (err) {
+    log(`Certificate setup warning: ${err.message}`);
+  }
+
+  const secureContexts = {};
+  function getContext(hostname) {
+    if (!secureContexts[hostname]) {
+      secureContexts[hostname] = getSecureContext(hostname);
+    }
+    return secureContexts[hostname];
+  }
+
+  const proxy = createProxy({ log, getSecureContext: getContext });
 
   proxy.on('error', (err) => {
-    log(`[block-cc] Proxy error: ${err.message}`);
+    log(`Proxy error: ${err.message}`);
     process.exit(1);
   });
 
   proxy.listen(0, '127.0.0.1', () => {
     const port = proxy.address().port;
 
+    const extraCerts = caCertPath && process.env.NODE_EXTRA_CA_CERTS
+      ? `${process.env.NODE_EXTRA_CA_CERTS}:${caCertPath}`
+      : (caCertPath || process.env.NODE_EXTRA_CA_CERTS || '');
+
     const env = {
       ...process.env,
       HTTP_PROXY: `http://127.0.0.1:${port}`,
       HTTPS_PROXY: `http://127.0.0.1:${port}`,
+      DISABLE_AUTOUPDATER: '1',
+      CLAUDE_CODE_DISABLE_UPDATE_CHECK: '1',
+      CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: '1',
     };
+
+    if (extraCerts) {
+      env.NODE_EXTRA_CA_CERTS = extraCerts;
+    }
 
     const claude = spawn('claude', args.slice(1), {
       env,

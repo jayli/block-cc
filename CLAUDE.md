@@ -4,19 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-`block-cc` is a zero-dependency Node.js CLI tool. `npx block-cc claude` starts a local HTTP CONNECT proxy that blocks telemetry/analytics domains, then spawns Claude Code with `HTTP_PROXY`/`HTTPS_PROXY` injected. Only Claude Code's traffic goes through the proxy — browsers and other apps are unaffected.
+`block-cc` is a zero-dependency Node.js CLI tool. `npx block-cc claude` provides three-layer defense: (1) HTTP CONNECT proxy blocks telemetry domains at the network level, (2) TLS MITM for `claude.ai` — `/api/web/domain_info` returns a fake `{"domain":"...","can_fetch":true}` without ever hitting the real server, all other `claude.ai` paths are blocked, (3) environment variables disable update checks and feedback surveys. Claude Code is spawned with `HTTP_PROXY`/`HTTPS_PROXY`/`NODE_EXTRA_CA_CERTS` injected. Only Claude Code's traffic is affected — browsers and other apps are unaffected.
 
 ## Architecture
 
-- **`index.js`** — CLI entry (`#!/usr/bin/env node`). Detects Claude Code installation (cross-platform via `spawnSync` + `shell: true`), starts the proxy on a random port (`listen(0)`), spawns `claude` with `HTTP_PROXY`/`HTTPS_PROXY` in env, then closes the proxy when the claude process exits. All extra CLI args after `claude` are forwarded verbatim to `claude` (e.g. `npx block-cc claude -c`).
-- **`proxy.js`** — HTTP CONNECT proxy (`http.createServer`). In the `connect` event, checks the target hostname against `BLOCK_DOMAINS`. Blocked: `clientSocket.destroy()`. Allowed: `net.connect` tunnel with bidirectional pipe. No TLS certificate needed — blocking happens at the CONNECT stage before the TLS handshake. Exports `{ createProxy, shouldBlock }`.
+- **`index.js`** — CLI entry (`#!/usr/bin/env node`). Detects Claude Code installation, sets up CA certificates, starts the proxy on a random port (`listen(0)`), spawns `claude` with env injections, closes the proxy on exit. All extra CLI args forwarded verbatim.
+- **`proxy.js`** — HTTP CONNECT proxy. Three behaviors per domain: (1) `BLOCK_DOMAINS` — `clientSocket.destroy()` at CONNECT stage, (2) `MITM_DOMAINS` — TLS MITM via `tls.TLSSocket`, `/api/web/domain_info` returns fake JSON, all other paths blocked, (3) everything else — `net.connect` transparent tunnel. Exports `{ createProxy, shouldBlock }`.
+- **`cert.js`** — Certificate management. Uses `openssl` to generate a local CA and per-hostname server certificates with SAN. Stored in `~/.config/block-cc/`. `NODE_EXTRA_CA_CERTS` makes Claude Code trust the CA automatically.
 
 ## Blocked domains
 
-`statsig.com`, `datadoghq.com`, `sentry.io`, `growthbook.io`, `claude.ai`, `api.anthropic.com` — case-insensitive match with subdomain support. Hardcoded, no config file.
+**CONNECT-level block:** `statsig.com`, `datadoghq.com`, `sentry.io`, `growthbook.io`, `api.anthropic.com`
+
+**TLS MITM:** `claude.ai` — `/api/web/domain_info` faked, everything else blocked
 
 ## Constraints
 
-- Zero npm dependencies (stdlib only: `http`, `net`, `child_process`).
+- Zero npm dependencies (stdlib only: `http`, `net`, `tls`, `child_process`).
 - No build step. `node index.js` directly.
-- No test suite defined. Test manually with `node -e "require('./proxy')"` for load check and the `shouldBlock` test pattern used during development.
+- No test suite defined.
