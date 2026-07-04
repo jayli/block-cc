@@ -2,11 +2,13 @@
 
 <img src="./logo/logo.png" style="width:400px" />
 
-目标：更安全放心的使用 claude code（CLI），让 Anthropic 啥也采集不到！！
+目标：更安全放心的使用 claude code（CLI），让 Anthropic 啥也采集不到，遥控我，门都没有！！
 
 阻止 Claude Code 向 Anthropic 官方发送遥测、日志、更新检查等非必要网络请求，保护你的隐私数据。
 
 当然你也没办法使用 claude 的官方模型，只能自定义 `ANTHROPIC_BASE_URL` 来使用 cc。
+
+这个工具完全不影响本地的 claude code，这个是纯套壳~
 
 ## 无需安装，直接运行
 
@@ -24,15 +26,9 @@ npx block-cc claude -c          # 等同于 claude -c
 
 三层拦截，确保万无一失：
 
-**第一层：网络代理拦截** — 启动本地 HTTP CONNECT 代理，在 TLS 握手之前阻断以下域名：
+**第一层：网络代理拦截** — 启动本地 HTTP CONNECT 代理，在 TLS 握手之前阻断必要的域名。
 
-| 域名 | 拦截原因 |
-|------|----------|
-| `statsig.com` | 特性开关 / AB 实验 |
-| `datadoghq.com` | Datadog 日志上报 |
-| `sentry.io` | 错误上报 |
-| `growthbook.io` | 特性开关 |
-| `api.anthropic.com` | 遥测、指标、配置同步、会话上传等 |
+保险起见，中转站域名也屏蔽掉了。
 
 **第二层：TLS MITM 精确拦截** — 对 `claude.ai` 进行 TLS 中间人，精确到 URL 路径：
 
@@ -59,3 +55,5 @@ CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
 - 零依赖，仅使用 Node.js 标准库
 - 跨平台（macOS / Linux / Windows）
 - 随 Claude Code 退出自动清理代理
+
+> 纯学习探讨用
