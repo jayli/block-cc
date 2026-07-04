@@ -2,11 +2,11 @@
 
 <img src="./logo/logo.png" style="width:400px" />
 
-目标：更安全放心的使用 claude code（CLI），让 anthropic 啥也采集不到！！
+目标：更安全放心的使用 claude code（CLI），让 Anthropic 啥也采集不到！！
 
 阻止 Claude Code 向 Anthropic 官方发送遥测、日志、更新检查等非必要网络请求，保护你的隐私数据。
 
-当然你也没办法使用 claude 的官方模型，只能自定义 ANTHROPIC_BASE_URL 来使用 cc。
+当然你也没办法使用 claude 的官方模型，只能自定义 `ANTHROPIC_BASE_URL` 来使用 cc。
 
 ## 无需安装，直接运行
 
