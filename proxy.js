@@ -13,7 +13,8 @@ const BLOCK_DOMAINS = [
 ];
 
 function shouldBlock(host) {
-  return BLOCK_DOMAINS.some((d) => host === d || host.endsWith('.' + d));
+  const h = host.toLowerCase();
+  return BLOCK_DOMAINS.some((d) => h === d || h.endsWith('.' + d));
 }
 
 function createProxy() {

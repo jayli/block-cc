@@ -17,6 +17,12 @@ function checkClaude() {
     );
     process.exit(1);
   }
+  if (result.status !== 0) {
+    console.error(
+      `Claude Code 未安装或已损坏 (exit code: ${result.status})，请执行: npm install -g @anthropic-ai/claude-code`
+    );
+    process.exit(1);
+  }
 }
 
 function main() {
@@ -30,6 +36,11 @@ function main() {
   checkClaude();
 
   const proxy = createProxy();
+
+  proxy.on('error', (err) => {
+    console.error(`[block-cc] Proxy error: ${err.message}`);
+    process.exit(1);
+  });
 
   proxy.listen(0, '127.0.0.1', () => {
     const port = proxy.address().port;
@@ -49,15 +60,10 @@ function main() {
     claude.on('exit', (code, signal) => {
       proxy.close();
       if (signal) {
-        process.exit(128 + (signal === 'SIGTERM' ? 15 : 9));
+        process.exit(code || 1);
       }
       process.exit(code || 0);
     });
-  });
-
-  proxy.on('error', (err) => {
-    console.error(`[block-cc] Proxy error: ${err.message}`);
-    process.exit(1);
   });
 }
 
