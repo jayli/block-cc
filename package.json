@@ -1,6 +1,6 @@
 {
   "name": "block-cc",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Launch Claude Code with telemetry domains blocked",
   "homepage": "https://github.com/jayli/block-cc#readme",
   "bugs": {

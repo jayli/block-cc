@@ -2,6 +2,8 @@
 
 <img src="./logo/logo.png" style="width:400px" />
 
+目标：更安全放心的使用 claude code（CLI），让 ahthropic 啥也采集不到！！
+
 阻止 Claude Code 向 Anthropic 官方发送遥测、日志、更新检查等非必要网络请求，保护你的隐私数据。
 
 当然你也没办法使用 claude 的官方模型，只能自定义 ANTHROPIC_BASE_URL 来使用 cc。
@@ -12,7 +14,7 @@
 npx block-cc claude
 ```
 
-Claude Code 的所有额外参数会透传：
+Claude Code 的所有额外参数会透传，比如：
 
 ```bash
 npx block-cc claude -c          # 等同于 claude -c
@@ -34,12 +36,10 @@ npx block-cc claude -c          # 等同于 claude -c
 
 **第二层：TLS MITM 精确拦截** — 对 `claude.ai` 进行 TLS 中间人，精确到 URL 路径：
 
-- `claude.ai/api/web/domain_info` → 本地返回 `{"domain":"...","can_fetch":true}`，请求不离开本机
+- `claude.ai/api/web/domain_info` → 请求伪造，不离开本机
 - `claude.ai` 其他所有路径 → 阻断
 
-首次运行自动生成本地 CA 证书，通过 `NODE_EXTRA_CA_CERTS` 让 Claude Code 自动信任，无需手动安装。
-
-**第三层：环境变量关闭** — 注入开关，从应用层禁用更新和反馈：
+**第三层：环境变量关闭** — 注入开关（只做最小注入），从应用层禁用更新和反馈：
 
 ```
 DISABLE_AUTOUPDATER=1

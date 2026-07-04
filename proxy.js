@@ -7,6 +7,7 @@ const { URL } = require('url');
 
 const BLOCK_DOMAINS = [
   'statsig.com',
+  'statsig.anthropic.com',
   'datadoghq.com',
   'sentry.io',
   'growthbook.io',
@@ -118,7 +119,7 @@ function createProxy(opts) {
         } else if (host.toLowerCase() === 'api.anthropic.com' && reqPath && reqPath.startsWith('/v1/')) {
           log(`Blocked API request: ${host}:${port}${reqPath}`);
           sendTextResponse(tlsSocket, 403, 'Forbidden', 'blocked');
-        } else if (host.toLowerCase() === 'api.anthropic.com' && reqPath === '/api/event_logging/v2/batch') {
+        } else if (host.toLowerCase() === 'api.anthropic.com' && reqPath && reqPath.startsWith('/api/event_logging/v2/batch')) {
           log(`Accepted event logging request: ${host}:${port}${reqPath}`);
           sendNoContentResponse(tlsSocket);
         } else {

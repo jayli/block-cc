@@ -138,6 +138,10 @@ test('blocks status.claude.com', () => {
   assert.equal(shouldBlock('status.claude.com'), true);
 });
 
+test('blocks statsig.anthropic.com', () => {
+  assert.equal(shouldBlock('statsig.anthropic.com'), true);
+});
+
 test('MITM returns blocked for api.anthropic.com v1 requests', async () => {
   const logs = [];
   const { cert, secureContext } = createSelfSignedContext('api.anthropic.com');
@@ -186,6 +190,34 @@ test('MITM accepts api.anthropic.com event logging batches without forwarding', 
     assert.equal(response.split('\r\n\r\n').at(-1), '');
     assert.deepEqual(logs, [
       'Accepted event logging request: api.anthropic.com:443/api/event_logging/v2/batch',
+    ]);
+  } finally {
+    proxy.close();
+  }
+});
+
+test('MITM accepts api.anthropic.com event logging batches with query params', async () => {
+  const logs = [];
+  const { cert, secureContext } = createSelfSignedContext('api.anthropic.com');
+  const proxy = createProxy({
+    log: (msg) => logs.push(msg),
+    getSecureContext: () => secureContext,
+  });
+
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+
+  try {
+    const response = await fetchViaProxy(
+      proxy,
+      'api.anthropic.com',
+      cert,
+      '/api/event_logging/v2/batch?client=claude-code'
+    );
+    assert.match(response, /^HTTP\/1\.1 204 No Content/);
+    assert.equal(response.split('\r\n\r\n').at(-1), '');
+    assert.deepEqual(logs, [
+      'Accepted event logging request: api.anthropic.com:443/api/event_logging/v2/batch?client=claude-code',
     ]);
   } finally {
     proxy.close();
