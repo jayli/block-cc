@@ -17,14 +17,15 @@ function shouldBlock(host) {
   return BLOCK_DOMAINS.some((d) => h === d || h.endsWith('.' + d));
 }
 
-function createProxy() {
+function createProxy(opts) {
+  const log = (opts && opts.log) || (() => {});
   const server = http.createServer();
 
   server.on('connect', (req, clientSocket, head) => {
     const [host, port] = req.url.split(':');
 
     if (shouldBlock(host)) {
-      console.error(`[block-cc] Blocked: ${host}:${port}`);
+      log(`[block-cc] Blocked: ${host}:${port}`);
       clientSocket.destroy();
       return;
     }

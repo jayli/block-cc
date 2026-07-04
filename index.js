@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
 const { spawn, spawnSync } = require('child_process');
 const { createProxy } = require('./proxy');
 
@@ -29,6 +32,34 @@ function checkClaude() {
   }
 }
 
+function ensureDir(dir) {
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+}
+
+function createLogger() {
+  const logDir = path.join(os.homedir(), '.config', 'block-cc');
+  ensureDir(logDir);
+  const logPath = path.join(logDir, 'block-cc.log');
+
+  return (msg) => {
+    const line = `${new Date().toISOString()} ${msg}`;
+    let content = '';
+    if (fs.existsSync(logPath)) {
+      content = fs.readFileSync(logPath, 'utf-8');
+    }
+    content += line + '\n';
+
+    const lines = content.split('\n').filter(Boolean);
+    if (lines.length > 1000) {
+      content = lines.slice(-1000).join('\n') + '\n';
+    }
+
+    fs.writeFileSync(logPath, content);
+  };
+}
+
 function main() {
   const args = process.argv.slice(2);
 
@@ -39,10 +70,12 @@ function main() {
 
   checkClaude();
 
-  const proxy = createProxy();
+  const log = createLogger();
+
+  const proxy = createProxy({ log });
 
   proxy.on('error', (err) => {
-    console.error(`[block-cc] Proxy error: ${err.message}`);
+    log(`[block-cc] Proxy error: ${err.message}`);
     process.exit(1);
   });
 
