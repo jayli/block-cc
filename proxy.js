@@ -30,7 +30,6 @@ function shouldMitm(host) {
 }
 
 function parseDomainFromPath(reqPath) {
-  // Extract domain from /api/web/domain_info?domain=xxx
   try {
     const url = new URL(`https://claude.ai${reqPath}`);
     return url.searchParams.get('domain') || 'unknown';
@@ -73,6 +72,7 @@ function createProxy(opts) {
     }
 
     if (shouldMitm(host)) {
+      log(`MITM: ${host}:${port}`);
       clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 
       let sc;
@@ -132,6 +132,7 @@ function createProxy(opts) {
       return;
     }
 
+    log(`Tunnel: ${host}:${port}`);
     const targetSocket = net.connect(port, host, () => {
       clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
       targetSocket.write(head);

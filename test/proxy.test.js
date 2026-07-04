@@ -162,7 +162,10 @@ test('MITM returns blocked for api.anthropic.com v1 requests', async () => {
     );
     assert.match(response, /^HTTP\/1\.1 403 Forbidden/);
     assert.equal(response.split('\r\n\r\n').at(-1), 'blocked');
-    assert.deepEqual(logs, ['Blocked API request: api.anthropic.com:443/v1/messages']);
+    assert.deepEqual(logs, [
+      'MITM: api.anthropic.com:443',
+      'Blocked API request: api.anthropic.com:443/v1/messages',
+    ]);
   } finally {
     proxy.close();
   }
@@ -189,6 +192,7 @@ test('MITM accepts api.anthropic.com event logging batches without forwarding', 
     assert.match(response, /^HTTP\/1\.1 204 No Content/);
     assert.equal(response.split('\r\n\r\n').at(-1), '');
     assert.deepEqual(logs, [
+      'MITM: api.anthropic.com:443',
       'Accepted event logging request: api.anthropic.com:443/api/event_logging/v2/batch',
     ]);
   } finally {
@@ -217,6 +221,7 @@ test('MITM accepts api.anthropic.com event logging batches with query params', a
     assert.match(response, /^HTTP\/1\.1 204 No Content/);
     assert.equal(response.split('\r\n\r\n').at(-1), '');
     assert.deepEqual(logs, [
+      'MITM: api.anthropic.com:443',
       'Accepted event logging request: api.anthropic.com:443/api/event_logging/v2/batch?client=claude-code',
     ]);
   } finally {
@@ -238,7 +243,10 @@ for (const hostname of ['claude.ai', 'api.anthropic.com']) {
 
     try {
       await fetchDomainInfoViaProxy(proxy, hostname, cert);
-      assert.deepEqual(logs, ['Faked domain check: b.consolelog.work']);
+      assert.deepEqual(logs, [
+        `MITM: ${hostname}:443`,
+        'Faked domain check: b.consolelog.work',
+      ]);
     } finally {
       proxy.close();
     }

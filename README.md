@@ -36,8 +36,8 @@ npx block-cc claude -c          # 等同于 claude -c
 
 **第二层：TLS MITM 精确拦截** — 对 `claude.ai` 进行 TLS 中间人，精确到 URL 路径：
 
-- `claude.ai/api/web/domain_info` → 请求伪造，不离开本机
-- `claude.ai` 其他所有路径 → 阻断
+- `claude.ai` → 功能性请求全部伪造，不离开本机
+- `claude.ai` → 其他非功能性所有请求都阻断
 
 **第三层：环境变量关闭** — 注入开关（只做最小注入），从应用层禁用更新和反馈：
 
@@ -53,7 +53,6 @@ CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
 
 - Node.js >= 18
 - Claude Code 已安装
-- `openssl`（macOS/Linux 自带）
 
 ## 特点
 
