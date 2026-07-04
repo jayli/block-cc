@@ -76,6 +76,14 @@ alias block-cc='nocorrect npx block-cc'
 block-cc claude
 ```
 
+或者你想更彻底重写 claude 命令，这样配~/.zshrc：
+
+```
+claude() {
+  nocorrect npx block-cc claude "$@"
+}
+```
+
 这样就更清净了！！
 
 > 纯学习探讨用
