@@ -1,0 +1,22 @@
+{
+  "name": "block-cc",
+  "version": "1.0.0",
+  "description": "Launch Claude Code with telemetry domains blocked",
+  "homepage": "https://github.com/jayli/block-cc#readme",
+  "bugs": {
+    "url": "https://github.com/jayli/block-cc/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jayli/block-cc.git"
+  },
+  "license": "ISC",
+  "author": "",
+  "type": "commonjs",
+  "bin": {
+    "block-cc": "./index.js"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  }
+}
