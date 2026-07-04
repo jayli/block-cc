@@ -14,9 +14,9 @@ const INSTALL_CMD = process.platform === 'win32'
   ? 'irm https://claude.ai/install.ps1 | iex'
   : 'curl -fsSL https://claude.ai/install.sh | bash';
 
-function checkClaude() {
+function checkClaude(env) {
   const result = spawnSync('claude', ['--version'], {
-    shell: true,
+    env,
     stdio: 'pipe',
   });
   if (result.error && result.error.code === 'ENOENT') {
@@ -94,8 +94,6 @@ function main() {
     process.exit(1);
   }
 
-  checkClaude();
-
   const log = createLogger();
 
   let caCertPath;
@@ -129,10 +127,17 @@ function main() {
     const proxyUrl = `http://127.0.0.1:${port}`;
     const env = buildClaudeEnv({ baseEnv: process.env, proxyUrl, caCertPath });
 
+    checkClaude(env);
+
     const claude = spawn('claude', args.slice(1), {
       env,
       stdio: 'inherit',
-      shell: true,
+    });
+
+    claude.on('error', (err) => {
+      log(`Claude spawn failed: ${err.message}`);
+      proxy.close();
+      process.exit(1);
     });
 
     claude.on('exit', (code, signal) => {

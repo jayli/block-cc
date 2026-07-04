@@ -146,6 +146,9 @@ const MITM_DOMAINS = [
   'api.anthropic.com',
 ];
 
+const DEFAULT_HEADER_TIMEOUT_MS = 10000;
+const DEFAULT_MAX_HEADER_BYTES = 64 * 1024;
+
 function shouldBlock(host) {
   const h = host.toLowerCase();
   return BLOCK_DOMAINS.some((d) => h === d || h.endsWith('.' + d));
@@ -163,6 +166,33 @@ function parseDomainFromPath(reqPath) {
   } catch (_) {
     return 'unknown';
   }
+}
+
+function normalizeRequestTarget(target) {
+  if (!target) return null;
+  if (target.startsWith('/')) return target;
+
+  try {
+    const url = new URL(target);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+      return null;
+    }
+    return `${url.pathname}${url.search}`;
+  } catch (_) {
+    return null;
+  }
+}
+
+function parseRequestLine(line) {
+  const parts = line.split(' ');
+  if (parts.length !== 3) return null;
+
+  const [method, target, version] = parts;
+  if (!/^[A-Z]+$/.test(method)) return null;
+  if (!target) return null;
+  if (version !== 'HTTP/1.1' && version !== 'HTTP/1.0') return null;
+
+  return { method, target, version };
 }
 
 function sendTextResponse(tlsSocket, statusCode, statusText, body) {
@@ -186,6 +216,8 @@ function sendNoContentResponse(tlsSocket) {
 function createProxy(opts) {
   const log = (opts && opts.log) || (() => {});
   const getSecureContext = (opts && opts.getSecureContext) || (() => { throw new Error('secureContext not configured'); });
+  const headerTimeoutMs = (opts && opts.headerTimeoutMs) || DEFAULT_HEADER_TIMEOUT_MS;
+  const maxHeaderBytes = (opts && opts.maxHeaderBytes) || DEFAULT_MAX_HEADER_BYTES;
   const server = http.createServer();
 
   server.on('connect', (req, clientSocket, head) => {
@@ -214,17 +246,51 @@ function createProxy(opts) {
       const tlsSocket = new tls.TLSSocket(clientSocket, {
         isServer: true,
         secureContext: sc,
+        ALPNProtocols: ['http/1.1'],
       });
 
-      let buffer = '';
+      let buffer = Buffer.alloc(0);
+      let handled = false;
+      const headerTimer = setTimeout(() => {
+        if (handled) return;
+        handled = true;
+        log(`Blocked incomplete MITM header: ${host}:${port}`);
+        tlsSocket.destroy();
+      }, headerTimeoutMs);
+
+      function cleanupHeaderTimer() {
+        clearTimeout(headerTimer);
+      }
+
       tlsSocket.on('data', (chunk) => {
-        buffer += chunk.toString();
+        if (handled) return;
+        buffer = Buffer.concat([buffer, chunk]);
 
-        if (!buffer.includes('\r\n\r\n')) return;
+        if (buffer.length > maxHeaderBytes) {
+          handled = true;
+          cleanupHeaderTimer();
+          log(`Blocked oversized MITM header: ${host}:${port}`);
+          tlsSocket.destroy();
+          return;
+        }
 
-        const [headerPart] = buffer.split('\r\n\r\n');
+        const headerEnd = buffer.indexOf('\r\n\r\n');
+        if (headerEnd === -1) return;
+
+        handled = true;
+        cleanupHeaderTimer();
+        const headerPart = buffer.subarray(0, headerEnd).toString();
         const lines = headerPart.split('\r\n');
-        const [method, reqPath] = lines[0].split(' ');
+        const request = parseRequestLine(lines[0]);
+
+        if (!request) {
+          log(`Blocked malformed MITM request: ${host}:${port}`);
+          tlsSocket.destroy();
+          return;
+        }
+
+        const { method } = request;
+        const reqPath = normalizeRequestTarget(request.target);
 
         if (method === 'CONNECT') {
           log(`Blocked CONNECT inside MITM: ${host}:${port}`);
@@ -248,7 +314,7 @@ function createProxy(opts) {
           sendTextResponse(tlsSocket, 403, 'Forbidden', 'blocked');
         } else if (host.toLowerCase() === 'api.anthropic.com' && reqPath && reqPath.startsWith('/api/event_logging/')) {
           log(`Blocked event logging request: ${host}:${port}${reqPath}`);
-          sendTextResponse(tlsSocket, 403, 'Forbidden', 'blocked');
+          sendNoContentResponse(tlsSocket);
         } else {
           log(`Blocked via MITM: ${host}:${port}${reqPath || ''}`);
           tlsSocket.destroy();
@@ -256,6 +322,7 @@ function createProxy(opts) {
       });
 
       tlsSocket.on('error', () => {});
+      tlsSocket.on('close', cleanupHeaderTimer);
       return;
     }
 

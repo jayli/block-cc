@@ -51,13 +51,13 @@ function createSelfSignedContext(hostname) {
   };
 }
 
-function readUntil(socket, marker) {
+function readUntil(socket, marker, timeoutMs = 1000) {
   return new Promise((resolve, reject) => {
     let buffer = Buffer.alloc(0);
     const timer = setTimeout(() => {
       cleanup();
       reject(new Error(`Timed out waiting for ${marker.toString()}`));
-    }, 1000);
+    }, timeoutMs);
 
     function onData(chunk) {
       buffer = Buffer.concat([buffer, chunk]);
@@ -83,7 +83,7 @@ function readUntil(socket, marker) {
   });
 }
 
-async function fetchViaProxy(proxy, hostname, ca, reqPath) {
+async function fetchViaProxy(proxy, hostname, ca, reqPath, opts = {}) {
   const socket = net.connect(proxy.address().port, '127.0.0.1');
   await once(socket, 'connect');
 
@@ -100,11 +100,13 @@ async function fetchViaProxy(proxy, hostname, ca, reqPath) {
     servername: hostname,
     ca,
     rejectUnauthorized: true,
+    ALPNProtocols: opts.ALPNProtocols,
   });
   await once(tlsSocket, 'secureConnect');
 
+  const requestTarget = opts.requestTarget || reqPath;
   tlsSocket.write(
-    `GET ${reqPath} HTTP/1.1\r\n` +
+    `GET ${requestTarget} HTTP/1.1\r\n` +
     `Host: ${hostname}\r\n` +
     'Connection: close\r\n\r\n'
   );
@@ -117,6 +119,59 @@ async function fetchViaProxy(proxy, hostname, ca, reqPath) {
   });
 
   return response;
+}
+
+async function connectTlsViaProxy(proxy, hostname, ca, opts = {}) {
+  const socket = net.connect(proxy.address().port, '127.0.0.1');
+  await once(socket, 'connect');
+
+  socket.write(
+    `CONNECT ${hostname}:443 HTTP/1.1\r\n` +
+    `Host: ${hostname}:443\r\n\r\n`
+  );
+
+  const connectResponse = await readUntil(socket, Buffer.from('\r\n\r\n'));
+  assert.match(connectResponse.toString(), /^HTTP\/1\.1 200 Connection Established/);
+
+  const tlsSocket = tls.connect({
+    socket,
+    servername: hostname,
+    ca,
+    rejectUnauthorized: true,
+    ALPNProtocols: opts.ALPNProtocols,
+  });
+  await once(tlsSocket, 'secureConnect');
+  return tlsSocket;
+}
+
+function waitForSocketClose(socket) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('Timed out waiting for socket close'));
+    }, 1500);
+
+    function cleanup() {
+      clearTimeout(timer);
+      socket.off('close', onClose);
+      socket.off('end', onClose);
+      socket.off('error', onError);
+    }
+
+    function onClose() {
+      cleanup();
+      resolve();
+    }
+
+    function onError(err) {
+      cleanup();
+      reject(err);
+    }
+
+    socket.once('close', onClose);
+    socket.once('end', onClose);
+    socket.once('error', onError);
+  });
 }
 
 async function fetchDomainInfoViaProxy(proxy, hostname, ca) {
@@ -189,8 +244,8 @@ test('MITM blocks api.anthropic.com event logging requests', async () => {
       cert,
       '/api/event_logging/v2/batch'
     );
-    assert.match(response, /^HTTP\/1\.1 403 Forbidden/);
-    assert.equal(response.split('\r\n\r\n').at(-1), 'blocked');
+    assert.match(response, /^HTTP\/1\.1 204 No Content/);
+    assert.equal(response.split('\r\n\r\n').at(-1), '');
     assert.deepEqual(logs, [
       'MITM: api.anthropic.com:443',
       'Blocked event logging request: api.anthropic.com:443/api/event_logging/v2/batch',
@@ -218,8 +273,8 @@ test('MITM blocks api.anthropic.com event logging requests with query params', a
       cert,
       '/api/event_logging/v2/batch?client=claude-code'
     );
-    assert.match(response, /^HTTP\/1\.1 403 Forbidden/);
-    assert.equal(response.split('\r\n\r\n').at(-1), 'blocked');
+    assert.match(response, /^HTTP\/1\.1 204 No Content/);
+    assert.equal(response.split('\r\n\r\n').at(-1), '');
     assert.deepEqual(logs, [
       'MITM: api.anthropic.com:443',
       'Blocked event logging request: api.anthropic.com:443/api/event_logging/v2/batch?client=claude-code',
@@ -252,3 +307,133 @@ for (const hostname of ['claude.ai', 'api.anthropic.com']) {
     }
   });
 }
+
+test('MITM fakes domain_info for absolute-form request targets', async () => {
+  const logs = [];
+  const { cert, secureContext } = createSelfSignedContext('claude.ai');
+  const proxy = createProxy({
+    log: (msg) => logs.push(msg),
+    getSecureContext: () => secureContext,
+  });
+
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+
+  try {
+    const response = await fetchViaProxy(
+      proxy,
+      'claude.ai',
+      cert,
+      '/api/web/domain_info?domain=b.consolelog.work',
+      { requestTarget: 'https://claude.ai/api/web/domain_info?domain=b.consolelog.work' }
+    );
+    const body = response.split('\r\n\r\n').at(-1);
+    assert.match(response, /^HTTP\/1\.1 200 OK/);
+    assert.deepEqual(JSON.parse(body), {
+      domain: 'b.consolelog.work',
+      can_fetch: true,
+    });
+    assert.deepEqual(logs, [
+      'MITM: claude.ai:443',
+      'Faked domain check: b.consolelog.work',
+    ]);
+  } finally {
+    proxy.close();
+  }
+});
+
+test('MITM closes oversized headers without hanging', async () => {
+  const logs = [];
+  const { cert, secureContext } = createSelfSignedContext('claude.ai');
+  const proxy = createProxy({
+    log: (msg) => logs.push(msg),
+    getSecureContext: () => secureContext,
+  });
+
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+
+  try {
+    const tlsSocket = await connectTlsViaProxy(proxy, 'claude.ai', cert);
+    tlsSocket.write(
+      'GET /api/web/domain_info?domain=b.consolelog.work HTTP/1.1\r\n' +
+      `X-Fill: ${'a'.repeat(70 * 1024)}`
+    );
+    await waitForSocketClose(tlsSocket);
+    assert.deepEqual(logs, [
+      'MITM: claude.ai:443',
+      'Blocked oversized MITM header: claude.ai:443',
+    ]);
+  } finally {
+    proxy.close();
+  }
+});
+
+test('MITM closes incomplete headers after timeout', async () => {
+  const logs = [];
+  const { cert, secureContext } = createSelfSignedContext('claude.ai');
+  const proxy = createProxy({
+    log: (msg) => logs.push(msg),
+    getSecureContext: () => secureContext,
+    headerTimeoutMs: 20,
+  });
+
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+
+  try {
+    const tlsSocket = await connectTlsViaProxy(proxy, 'claude.ai', cert);
+    tlsSocket.write('GET /api/web/domain_info?domain=b.consolelog.work HTTP/1.1\r\n');
+    await waitForSocketClose(tlsSocket);
+    assert.deepEqual(logs, [
+      'MITM: claude.ai:443',
+      'Blocked incomplete MITM header: claude.ai:443',
+    ]);
+  } finally {
+    proxy.close();
+  }
+});
+
+test('MITM fails closed for malformed request lines', async () => {
+  const logs = [];
+  const { cert, secureContext } = createSelfSignedContext('claude.ai');
+  const proxy = createProxy({
+    log: (msg) => logs.push(msg),
+    getSecureContext: () => secureContext,
+  });
+
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+
+  try {
+    const tlsSocket = await connectTlsViaProxy(proxy, 'claude.ai', cert);
+    tlsSocket.write('BROKEN\r\nHost: claude.ai\r\n\r\n');
+    await waitForSocketClose(tlsSocket);
+    assert.deepEqual(logs, [
+      'MITM: claude.ai:443',
+      'Blocked malformed MITM request: claude.ai:443',
+    ]);
+  } finally {
+    proxy.close();
+  }
+});
+
+test('MITM only negotiates http/1.1 over ALPN', async () => {
+  const { cert, secureContext } = createSelfSignedContext('claude.ai');
+  const proxy = createProxy({
+    getSecureContext: () => secureContext,
+  });
+
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+
+  try {
+    const tlsSocket = await connectTlsViaProxy(proxy, 'claude.ai', cert, {
+      ALPNProtocols: ['h2', 'http/1.1'],
+    });
+    assert.equal(tlsSocket.alpnProtocol, 'http/1.1');
+    tlsSocket.destroy();
+  } finally {
+    proxy.close();
+  }
+});
