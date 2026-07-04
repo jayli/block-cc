@@ -9,7 +9,7 @@ const net = require('net');
 const tls = require('tls');
 const { execFileSync } = require('child_process');
 
-const { createProxy } = require('../proxy');
+const { createProxy, shouldBlock } = require('../proxy');
 
 function once(emitter, event) {
   return new Promise((resolve, reject) => {
@@ -83,7 +83,7 @@ function readUntil(socket, marker) {
   });
 }
 
-async function fetchDomainInfoViaProxy(proxy, hostname, ca) {
+async function fetchViaProxy(proxy, hostname, ca, reqPath) {
   const socket = net.connect(proxy.address().port, '127.0.0.1');
   await once(socket, 'connect');
 
@@ -104,7 +104,7 @@ async function fetchDomainInfoViaProxy(proxy, hostname, ca) {
   await once(tlsSocket, 'secureConnect');
 
   tlsSocket.write(
-    'GET /api/web/domain_info?domain=b.consolelog.work HTTP/1.1\r\n' +
+    `GET ${reqPath} HTTP/1.1\r\n` +
     `Host: ${hostname}\r\n` +
     'Connection: close\r\n\r\n'
   );
@@ -116,6 +116,16 @@ async function fetchDomainInfoViaProxy(proxy, hostname, ca) {
     tlsSocket.on('error', reject);
   });
 
+  return response;
+}
+
+async function fetchDomainInfoViaProxy(proxy, hostname, ca) {
+  const response = await fetchViaProxy(
+    proxy,
+    hostname,
+    ca,
+    '/api/web/domain_info?domain=b.consolelog.work'
+  );
   const body = response.split('\r\n\r\n').at(-1);
   assert.match(response, /^HTTP\/1\.1 200 OK/);
   assert.deepEqual(JSON.parse(body), {
@@ -123,6 +133,64 @@ async function fetchDomainInfoViaProxy(proxy, hostname, ca) {
     can_fetch: true,
   });
 }
+
+test('blocks status.claude.com', () => {
+  assert.equal(shouldBlock('status.claude.com'), true);
+});
+
+test('MITM returns blocked for api.anthropic.com v1 requests', async () => {
+  const logs = [];
+  const { cert, secureContext } = createSelfSignedContext('api.anthropic.com');
+  const proxy = createProxy({
+    log: (msg) => logs.push(msg),
+    getSecureContext: () => secureContext,
+  });
+
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+
+  try {
+    const response = await fetchViaProxy(
+      proxy,
+      'api.anthropic.com',
+      cert,
+      '/v1/messages'
+    );
+    assert.match(response, /^HTTP\/1\.1 403 Forbidden/);
+    assert.equal(response.split('\r\n\r\n').at(-1), 'blocked');
+    assert.deepEqual(logs, ['Blocked API request: api.anthropic.com:443/v1/messages']);
+  } finally {
+    proxy.close();
+  }
+});
+
+test('MITM accepts api.anthropic.com event logging batches without forwarding', async () => {
+  const logs = [];
+  const { cert, secureContext } = createSelfSignedContext('api.anthropic.com');
+  const proxy = createProxy({
+    log: (msg) => logs.push(msg),
+    getSecureContext: () => secureContext,
+  });
+
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+
+  try {
+    const response = await fetchViaProxy(
+      proxy,
+      'api.anthropic.com',
+      cert,
+      '/api/event_logging/v2/batch'
+    );
+    assert.match(response, /^HTTP\/1\.1 204 No Content/);
+    assert.equal(response.split('\r\n\r\n').at(-1), '');
+    assert.deepEqual(logs, [
+      'Accepted event logging request: api.anthropic.com:443/api/event_logging/v2/batch',
+    ]);
+  } finally {
+    proxy.close();
+  }
+});
 
 for (const hostname of ['claude.ai', 'api.anthropic.com']) {
   test(`MITM fakes ${hostname} domain_info responses`, async () => {

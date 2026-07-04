@@ -10,6 +10,7 @@ const BLOCK_DOMAINS = [
   'datadoghq.com',
   'sentry.io',
   'growthbook.io',
+  'status.claude.com',
 ];
 
 const MITM_DOMAINS = [
@@ -35,6 +36,24 @@ function parseDomainFromPath(reqPath) {
   } catch (_) {
     return 'unknown';
   }
+}
+
+function sendTextResponse(tlsSocket, statusCode, statusText, body) {
+  tlsSocket.end(
+    `HTTP/1.1 ${statusCode} ${statusText}\r\n` +
+    'Content-Type: text/plain; charset=utf-8\r\n' +
+    `Content-Length: ${Buffer.byteLength(body)}\r\n` +
+    'Connection: close\r\n\r\n' +
+    body
+  );
+}
+
+function sendNoContentResponse(tlsSocket) {
+  tlsSocket.end(
+    'HTTP/1.1 204 No Content\r\n' +
+    'Content-Length: 0\r\n' +
+    'Connection: close\r\n\r\n'
+  );
 }
 
 function createProxy(opts) {
@@ -96,6 +115,12 @@ function createProxy(opts) {
             'Connection: close\r\n\r\n' +
             body
           );
+        } else if (host.toLowerCase() === 'api.anthropic.com' && reqPath && reqPath.startsWith('/v1/')) {
+          log(`Blocked API request: ${host}:${port}${reqPath}`);
+          sendTextResponse(tlsSocket, 403, 'Forbidden', 'blocked');
+        } else if (host.toLowerCase() === 'api.anthropic.com' && reqPath === '/api/event_logging/v2/batch') {
+          log(`Accepted event logging request: ${host}:${port}${reqPath}`);
+          sendNoContentResponse(tlsSocket);
         } else {
           log(`Blocked via MITM: ${host}:${port}${reqPath || ''}`);
           tlsSocket.destroy();
