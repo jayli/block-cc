@@ -6,6 +6,10 @@ const { createProxy } = require('./proxy');
 
 const USAGE = 'Usage: npx block-cc claude';
 
+const INSTALL_CMD = process.platform === 'win32'
+  ? 'irm https://claude.ai/install.ps1 | iex'
+  : 'curl -fsSL https://claude.ai/install.sh | bash';
+
 function checkClaude() {
   const result = spawnSync('claude', ['--version'], {
     shell: true,
@@ -13,13 +17,13 @@ function checkClaude() {
   });
   if (result.error && result.error.code === 'ENOENT') {
     console.error(
-      'Claude Code 未安装，请先执行: npm install -g @anthropic-ai/claude-code'
+      `Claude Code 未安装，请先执行: ${INSTALL_CMD}`
     );
     process.exit(1);
   }
   if (result.status !== 0) {
     console.error(
-      `Claude Code 未安装或已损坏 (exit code: ${result.status})，请执行: npm install -g @anthropic-ai/claude-code`
+      `Claude Code 未安装或已损坏 (exit code: ${result.status})，请执行: ${INSTALL_CMD}`
     );
     process.exit(1);
   }
