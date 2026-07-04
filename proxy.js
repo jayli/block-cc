@@ -119,9 +119,9 @@ function createProxy(opts) {
         } else if (host.toLowerCase() === 'api.anthropic.com' && reqPath && reqPath.startsWith('/v1/')) {
           log(`Blocked API request: ${host}:${port}${reqPath}`);
           sendTextResponse(tlsSocket, 403, 'Forbidden', 'blocked');
-        } else if (host.toLowerCase() === 'api.anthropic.com' && reqPath && reqPath.startsWith('/api/event_logging/v2/batch')) {
-          log(`Accepted event logging request: ${host}:${port}${reqPath}`);
-          sendNoContentResponse(tlsSocket);
+        } else if (host.toLowerCase() === 'api.anthropic.com' && reqPath && reqPath.startsWith('/api/event_logging/')) {
+          log(`Blocked event logging request: ${host}:${port}${reqPath}`);
+          sendTextResponse(tlsSocket, 403, 'Forbidden', 'blocked');
         } else {
           log(`Blocked via MITM: ${host}:${port}${reqPath || ''}`);
           tlsSocket.destroy();

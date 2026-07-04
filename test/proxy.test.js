@@ -171,7 +171,7 @@ test('MITM returns blocked for api.anthropic.com v1 requests', async () => {
   }
 });
 
-test('MITM accepts api.anthropic.com event logging batches without forwarding', async () => {
+test('MITM blocks api.anthropic.com event logging requests', async () => {
   const logs = [];
   const { cert, secureContext } = createSelfSignedContext('api.anthropic.com');
   const proxy = createProxy({
@@ -189,18 +189,18 @@ test('MITM accepts api.anthropic.com event logging batches without forwarding', 
       cert,
       '/api/event_logging/v2/batch'
     );
-    assert.match(response, /^HTTP\/1\.1 204 No Content/);
-    assert.equal(response.split('\r\n\r\n').at(-1), '');
+    assert.match(response, /^HTTP\/1\.1 403 Forbidden/);
+    assert.equal(response.split('\r\n\r\n').at(-1), 'blocked');
     assert.deepEqual(logs, [
       'MITM: api.anthropic.com:443',
-      'Accepted event logging request: api.anthropic.com:443/api/event_logging/v2/batch',
+      'Blocked event logging request: api.anthropic.com:443/api/event_logging/v2/batch',
     ]);
   } finally {
     proxy.close();
   }
 });
 
-test('MITM accepts api.anthropic.com event logging batches with query params', async () => {
+test('MITM blocks api.anthropic.com event logging requests with query params', async () => {
   const logs = [];
   const { cert, secureContext } = createSelfSignedContext('api.anthropic.com');
   const proxy = createProxy({
@@ -218,11 +218,11 @@ test('MITM accepts api.anthropic.com event logging batches with query params', a
       cert,
       '/api/event_logging/v2/batch?client=claude-code'
     );
-    assert.match(response, /^HTTP\/1\.1 204 No Content/);
-    assert.equal(response.split('\r\n\r\n').at(-1), '');
+    assert.match(response, /^HTTP\/1\.1 403 Forbidden/);
+    assert.equal(response.split('\r\n\r\n').at(-1), 'blocked');
     assert.deepEqual(logs, [
       'MITM: api.anthropic.com:443',
-      'Accepted event logging request: api.anthropic.com:443/api/event_logging/v2/batch?client=claude-code',
+      'Blocked event logging request: api.anthropic.com:443/api/event_logging/v2/batch?client=claude-code',
     ]);
   } finally {
     proxy.close();
