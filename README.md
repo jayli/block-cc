@@ -66,6 +66,8 @@ CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
 
 可以这样启动，在`~/.zshrc`里加上快捷方式：
 
+### 1）方式一，重定义`block-cc`命令
+
 ```
 alias block-cc='nocorrect npx block-cc'
 ```
@@ -75,6 +77,8 @@ alias block-cc='nocorrect npx block-cc'
 ```
 block-cc claude
 ```
+
+### 2）方式二，重定义 `claude` 命令 
 
 或者你想更彻底重写 claude 命令，这样配~/.zshrc：
 
