@@ -10,11 +10,11 @@ const BLOCK_DOMAINS = [
   'datadoghq.com',
   'sentry.io',
   'growthbook.io',
-  'api.anthropic.com',
 ];
 
 const MITM_DOMAINS = [
   'claude.ai',
+  'api.anthropic.com',
 ];
 
 function shouldBlock(host) {

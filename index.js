@@ -61,6 +61,31 @@ function createLogger() {
   };
 }
 
+function buildClaudeEnv({ baseEnv, proxyUrl, caCertPath }) {
+  const extraCerts = caCertPath && baseEnv.NODE_EXTRA_CA_CERTS
+    ? `${baseEnv.NODE_EXTRA_CA_CERTS}:${caCertPath}`
+    : (caCertPath || baseEnv.NODE_EXTRA_CA_CERTS || '');
+
+  const env = {
+    ...baseEnv,
+    HTTP_PROXY: proxyUrl,
+    HTTPS_PROXY: proxyUrl,
+    http_proxy: proxyUrl,
+    https_proxy: proxyUrl,
+    NO_PROXY: 'localhost,127.0.0.1,::1',
+    no_proxy: 'localhost,127.0.0.1,::1',
+    DISABLE_AUTOUPDATER: '1',
+    CLAUDE_CODE_DISABLE_UPDATE_CHECK: '1',
+    CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: '1',
+  };
+
+  if (extraCerts) {
+    env.NODE_EXTRA_CA_CERTS = extraCerts;
+  }
+
+  return env;
+}
+
 function main() {
   const args = process.argv.slice(2);
 
@@ -101,23 +126,8 @@ function main() {
 
   proxy.listen(0, '127.0.0.1', () => {
     const port = proxy.address().port;
-
-    const extraCerts = caCertPath && process.env.NODE_EXTRA_CA_CERTS
-      ? `${process.env.NODE_EXTRA_CA_CERTS}:${caCertPath}`
-      : (caCertPath || process.env.NODE_EXTRA_CA_CERTS || '');
-
-    const env = {
-      ...process.env,
-      HTTP_PROXY: `http://127.0.0.1:${port}`,
-      HTTPS_PROXY: `http://127.0.0.1:${port}`,
-      DISABLE_AUTOUPDATER: '1',
-      CLAUDE_CODE_DISABLE_UPDATE_CHECK: '1',
-      CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: '1',
-    };
-
-    if (extraCerts) {
-      env.NODE_EXTRA_CA_CERTS = extraCerts;
-    }
+    const proxyUrl = `http://127.0.0.1:${port}`;
+    const env = buildClaudeEnv({ baseEnv: process.env, proxyUrl, caCertPath });
 
     const claude = spawn('claude', args.slice(1), {
       env,
@@ -135,4 +145,8 @@ function main() {
   });
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = { buildClaudeEnv, main };

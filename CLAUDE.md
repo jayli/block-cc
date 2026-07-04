@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-`block-cc` is a zero-dependency Node.js CLI tool. `npx block-cc claude` provides three-layer defense: (1) HTTP CONNECT proxy blocks telemetry domains at the network level, (2) TLS MITM for `claude.ai` — `/api/web/domain_info` returns a fake `{"domain":"...","can_fetch":true}` without ever hitting the real server, all other `claude.ai` paths are blocked, (3) environment variables disable update checks and feedback surveys. Claude Code is spawned with `HTTP_PROXY`/`HTTPS_PROXY`/`NODE_EXTRA_CA_CERTS` injected. Only Claude Code's traffic is affected — browsers and other apps are unaffected.
+`block-cc` is a zero-dependency Node.js CLI tool. `npx block-cc claude` provides three-layer defense: (1) HTTP CONNECT proxy blocks telemetry domains at the network level, (2) TLS MITM for Claude Code's domain safety checks — `/api/web/domain_info` on `claude.ai` and `api.anthropic.com` returns a fake `{"domain":"...","can_fetch":true}` without ever hitting the real server, all other MITM paths are blocked, (3) environment variables disable update checks and feedback surveys. Claude Code is spawned with proxy environment variables and `NODE_EXTRA_CA_CERTS` injected. Only Claude Code's traffic is affected — browsers and other apps are unaffected.
 
 ## Architecture
 
@@ -14,9 +14,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Blocked domains
 
-**CONNECT-level block:** `statsig.com`, `datadoghq.com`, `sentry.io`, `growthbook.io`, `api.anthropic.com`
+**CONNECT-level block:** `statsig.com`, `datadoghq.com`, `sentry.io`, `growthbook.io`
 
-**TLS MITM:** `claude.ai` — `/api/web/domain_info` faked, everything else blocked
+**TLS MITM:** `claude.ai`, `api.anthropic.com` — `/api/web/domain_info` faked, everything else blocked
 
 ## Constraints
 

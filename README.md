@@ -30,12 +30,12 @@ npx block-cc claude -c          # 等同于 claude -c
 | `datadoghq.com` | Datadog 日志上报 |
 | `sentry.io` | 错误上报 |
 | `growthbook.io` | 特性开关 |
-| `api.anthropic.com` | 遥测、指标、配置同步、会话上传等 |
 
-**第二层：TLS MITM 精确拦截** — 对 `claude.ai` 进行 TLS 中间人，精确到 URL 路径：
+**第二层：TLS MITM 精确拦截** — 对 Claude Code 的域名安全检查请求进行 TLS 中间人，精确到 URL 路径：
 
 - `claude.ai/api/web/domain_info` → 本地返回 `{"domain":"...","can_fetch":true}`，请求不离开本机
-- `claude.ai` 其他所有路径 → 阻断
+- `api.anthropic.com/api/web/domain_info` → 本地返回 `{"domain":"...","can_fetch":true}`，请求不离开本机
+- `claude.ai` / `api.anthropic.com` 其他所有路径 → 阻断
 
 首次运行自动生成本地 CA 证书，通过 `NODE_EXTRA_CA_CERTS` 让 Claude Code 自动信任，无需手动安装。
 
