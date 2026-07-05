@@ -3,7 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 function isSandboxSupported() {
   return process.platform === 'darwin';
@@ -46,4 +46,23 @@ function spawnClaude(args, env, log) {
   });
 }
 
-module.exports = { isSandboxSupported, spawnClaude };
+function spawnClaudeSync(args, env, opts = {}) {
+  if (isSandboxSupported()) {
+    const profilePath = generateProfile();
+    try {
+      return spawnSync('sandbox-exec', ['-f', profilePath, 'claude', ...args], {
+        env,
+        stdio: opts.stdio || 'pipe',
+      });
+    } finally {
+      try { fs.unlinkSync(profilePath); } catch (_) {}
+    }
+  }
+
+  return spawnSync('claude', args, {
+    env,
+    stdio: opts.stdio || 'pipe',
+  });
+}
+
+module.exports = { isSandboxSupported, spawnClaude, spawnClaudeSync };

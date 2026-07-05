@@ -4,10 +4,9 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { spawnSync } = require('child_process');
 const { createProxy } = require('./proxy');
 const { setupCA, getSecureContext } = require('./cert');
-const { spawnClaude } = require('./sandbox');
+const { spawnClaude, spawnClaudeSync } = require('./sandbox');
 
 const USAGE = 'Usage: npx block-cc claude';
 
@@ -16,10 +15,7 @@ const INSTALL_CMD = process.platform === 'win32'
   : 'curl -fsSL https://claude.ai/install.sh | bash';
 
 function checkClaude(env) {
-  const result = spawnSync('claude', ['--version'], {
-    env,
-    stdio: 'pipe',
-  });
+  const result = spawnClaudeSync(['--version'], env, { stdio: 'pipe' });
   if (result.error && result.error.code === 'ENOENT') {
     console.error(
       `Claude Code 未安装，请先执行: ${INSTALL_CMD}`

@@ -49,11 +49,31 @@ test('claude version check runs with proxy environment already injected', () => 
     '  argv: process.argv.slice(2),',
     '  HTTPS_PROXY: process.env.HTTPS_PROXY,',
     '  NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,',
+    '  sandboxed: process.env.BLOCK_CC_TEST_SANDBOXED === "1",',
     '}) + "\\n");',
     'process.exit(0);',
     '',
   ].join('\n'));
   fs.chmodSync(fakeClaude, 0o755);
+
+  const fakeSandboxExec = path.join(binDir, 'sandbox-exec');
+  fs.writeFileSync(fakeSandboxExec, [
+    '#!/usr/bin/env node',
+    "'use strict';",
+    "const { spawnSync } = require('child_process');",
+    'const args = process.argv.slice(2);',
+    'const commandIndex = args.indexOf("-f") >= 0 ? args.indexOf("-f") + 2 : 0;',
+    'const command = args[commandIndex];',
+    'const commandArgs = args.slice(commandIndex + 1);',
+    'const result = spawnSync(command, commandArgs, {',
+    '  stdio: "inherit",',
+    '  env: { ...process.env, BLOCK_CC_TEST_SANDBOXED: "1" },',
+    '});',
+    'if (result.error) throw result.error;',
+    'process.exit(result.status || 0);',
+    '',
+  ].join('\n'));
+  fs.chmodSync(fakeSandboxExec, 0o755);
 
   const result = spawnSync(process.execPath, [path.join(__dirname, '..', 'index.js'), 'claude'], {
     cwd: path.join(__dirname, '..'),
@@ -71,4 +91,7 @@ test('claude version check runs with proxy environment already injected', () => 
   assert.deepEqual(records[0].argv, ['--version']);
   assert.match(records[0].HTTPS_PROXY, /^http:\/\/127\.0\.0\.1:\d+$/);
   assert.match(records[0].NODE_EXTRA_CA_CERTS, /ca\.crt$/);
+  if (process.platform === 'darwin') {
+    assert.equal(records[0].sandboxed, true);
+  }
 });
