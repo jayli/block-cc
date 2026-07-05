@@ -14,8 +14,11 @@ const INSTALL_CMD = process.platform === 'win32'
   ? 'irm https://claude.ai/install.ps1 | iex'
   : 'curl -fsSL https://claude.ai/install.sh | bash';
 
-function checkClaude(env) {
-  const result = spawnClaudeSync(['--version'], env, { stdio: 'pipe' });
+function checkClaude(env, proxyPort) {
+  const result = spawnClaudeSync(['--version'], env, {
+    stdio: 'pipe',
+    proxyPort,
+  });
   if (result.error && result.error.code === 'ENOENT') {
     console.error(
       `Claude Code 未安装，请先执行: ${INSTALL_CMD}`
@@ -127,9 +130,9 @@ function main() {
     const proxyUrl = `http://127.0.0.1:${port}`;
     const env = buildClaudeEnv({ baseEnv: process.env, proxyUrl, caCertPath });
 
-    checkClaude(env);
+    checkClaude(env, port);
 
-    const claude = spawnClaude(args.slice(1), env, log);
+    const claude = spawnClaude(args.slice(1), env, log, { proxyPort: port });
 
     claude.on('error', (err) => {
       log(`Claude spawn failed: ${err.message}`);

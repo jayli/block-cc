@@ -50,6 +50,7 @@ test('claude version check runs with proxy environment already injected', () => 
     '  HTTPS_PROXY: process.env.HTTPS_PROXY,',
     '  NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,',
     '  sandboxed: process.env.BLOCK_CC_TEST_SANDBOXED === "1",',
+    '  sandboxProfile: process.env.BLOCK_CC_TEST_SANDBOX_PROFILE,',
     '}) + "\\n");',
     'process.exit(0);',
     '',
@@ -60,14 +61,21 @@ test('claude version check runs with proxy environment already injected', () => 
   fs.writeFileSync(fakeSandboxExec, [
     '#!/usr/bin/env node',
     "'use strict';",
+    "const fs = require('fs');",
     "const { spawnSync } = require('child_process');",
     'const args = process.argv.slice(2);',
-    'const commandIndex = args.indexOf("-f") >= 0 ? args.indexOf("-f") + 2 : 0;',
+    'const profileIndex = args.indexOf("-f") + 1;',
+    'const profile = fs.readFileSync(args[profileIndex], "utf8");',
+    'const commandIndex = profileIndex + 1;',
     'const command = args[commandIndex];',
     'const commandArgs = args.slice(commandIndex + 1);',
     'const result = spawnSync(command, commandArgs, {',
     '  stdio: "inherit",',
-    '  env: { ...process.env, BLOCK_CC_TEST_SANDBOXED: "1" },',
+    '  env: {',
+    '    ...process.env,',
+    '    BLOCK_CC_TEST_SANDBOXED: "1",',
+    '    BLOCK_CC_TEST_SANDBOX_PROFILE: profile,',
+    '  },',
     '});',
     'if (result.error) throw result.error;',
     'process.exit(result.status || 0);',
@@ -93,5 +101,8 @@ test('claude version check runs with proxy environment already injected', () => 
   assert.match(records[0].NODE_EXTRA_CA_CERTS, /ca\.crt$/);
   if (process.platform === 'darwin') {
     assert.equal(records[0].sandboxed, true);
+    const proxyPort = new URL(records[0].HTTPS_PROXY).port;
+    assert.match(records[0].sandboxProfile, new RegExp(`remote ip "localhost:${proxyPort}"`));
+    assert.doesNotMatch(records[0].sandboxProfile, /localhost:\*/);
   }
 });
