@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
+const net = require('net');
 const { createProxy } = require('./proxy');
 const { setupCA, getSecureContext } = require('./cert');
 const { spawnClaude, spawnClaudeSync } = require('./sandbox');
@@ -60,6 +61,78 @@ function createLogger() {
   };
 }
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function doubleQuoteValue(value) {
+  return String(value).replace(/["\\$`]/g, '\\$&');
+}
+
+function buildGitSshCommand(proxyUrl) {
+  const proxy = new URL(proxyUrl);
+  const proxyCommand = [
+    shellQuote(process.execPath),
+    shellQuote(__filename),
+    'ssh-proxy',
+    shellQuote(proxy.hostname),
+    shellQuote(proxy.port),
+    '%h',
+    '%p',
+  ].join(' ');
+  return `ssh -o ProxyCommand="${doubleQuoteValue(proxyCommand)}"`;
+}
+
+function runSshProxy(args) {
+  const [proxyHost, proxyPort, targetHost, targetPort] = args;
+  if (!proxyHost || !proxyPort || !targetHost || !targetPort) {
+    console.error('Usage: block-cc ssh-proxy <proxy-host> <proxy-port> <target-host> <target-port>');
+    process.exit(2);
+  }
+
+  const socket = net.connect(Number(proxyPort), proxyHost);
+  let buffer = Buffer.alloc(0);
+  let connected = false;
+
+  socket.on('connect', () => {
+    socket.write(
+      `CONNECT ${targetHost}:${targetPort} HTTP/1.1\r\n` +
+      `Host: ${targetHost}:${targetPort}\r\n\r\n`
+    );
+  });
+
+  socket.on('data', (chunk) => {
+    if (connected) return;
+    buffer = Buffer.concat([buffer, chunk]);
+    const headerEnd = buffer.indexOf('\r\n\r\n');
+    if (headerEnd === -1) return;
+
+    const header = buffer.subarray(0, headerEnd).toString();
+    const rest = buffer.subarray(headerEnd + 4);
+    const statusLine = header.split('\r\n')[0] || '';
+
+    if (!/^HTTP\/1\.[01] 2\d\d\b/.test(statusLine)) {
+      console.error(`Proxy CONNECT failed: ${statusLine}`);
+      socket.destroy();
+      process.exit(1);
+      return;
+    }
+
+    connected = true;
+    socket.removeAllListeners('data');
+    if (rest.length > 0) {
+      process.stdout.write(rest);
+    }
+    process.stdin.pipe(socket);
+    socket.pipe(process.stdout);
+  });
+
+  socket.on('error', (err) => {
+    console.error(`Proxy connection failed: ${err.message}`);
+    process.exit(1);
+  });
+}
+
 function buildClaudeEnv({ baseEnv, proxyUrl, caCertPath }) {
   const existingCerts = baseEnv.NODE_EXTRA_CA_CERTS || '';
 
@@ -76,6 +149,7 @@ function buildClaudeEnv({ baseEnv, proxyUrl, caCertPath }) {
     https_proxy: proxyUrl,
     NO_PROXY: 'localhost,127.0.0.1,::1',
     no_proxy: 'localhost,127.0.0.1,::1',
+    GIT_SSH_COMMAND: baseEnv.GIT_SSH_COMMAND || buildGitSshCommand(proxyUrl),
     DISABLE_AUTOUPDATER: '1',
     CLAUDE_CODE_DISABLE_UPDATE_CHECK: '1',
     CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY: '1',
@@ -90,6 +164,11 @@ function buildClaudeEnv({ baseEnv, proxyUrl, caCertPath }) {
 
 function main() {
   const args = process.argv.slice(2);
+
+  if (args[0] === 'ssh-proxy') {
+    runSshProxy(args.slice(1));
+    return;
+  }
 
   if (args[0] !== 'claude') {
     console.error(USAGE);

@@ -5,9 +5,17 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawnSync } = require('child_process');
+const net = require('net');
+const { spawn, spawnSync } = require('child_process');
 
 const { buildClaudeEnv } = require('../index');
+
+function once(emitter, event) {
+  return new Promise((resolve, reject) => {
+    emitter.once(event, resolve);
+    emitter.once('error', reject);
+  });
+}
 
 test('buildClaudeEnv injects proxy settings for common env readers', () => {
   const env = buildClaudeEnv({
@@ -30,6 +38,67 @@ test('buildClaudeEnv injects proxy settings for common env readers', () => {
   assert.equal(env.NO_PROXY, 'localhost,127.0.0.1,::1');
   assert.equal(env.no_proxy, 'localhost,127.0.0.1,::1');
   assert.equal(env.NODE_EXTRA_CA_CERTS, '/tmp/original-ca.pem:/tmp/block-cc-ca.pem');
+  assert.match(env.GIT_SSH_COMMAND, /^ssh -o ProxyCommand="/);
+  assert.match(env.GIT_SSH_COMMAND, /ssh-proxy '127\.0\.0\.1' '34567' %h %p/);
+  assert.doesNotMatch(env.GIT_SSH_COMMAND, /\bnc\b/);
+});
+
+test('buildClaudeEnv preserves existing Git SSH command', () => {
+  const env = buildClaudeEnv({
+    baseEnv: {
+      GIT_SSH_COMMAND: 'ssh -i /tmp/custom-key',
+    },
+    proxyUrl: 'http://127.0.0.1:45678',
+    caCertPath: '',
+  });
+
+  assert.equal(env.GIT_SSH_COMMAND, 'ssh -i /tmp/custom-key');
+});
+
+test('ssh-proxy command tunnels bytes through HTTP CONNECT proxy', async () => {
+  let connectRequest = '';
+  const proxy = net.createServer((socket) => {
+    socket.once('data', (chunk) => {
+      connectRequest = chunk.toString();
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\nhello');
+      socket.end();
+    });
+  });
+
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+
+  try {
+    const child = spawn(process.execPath, [
+      path.join(__dirname, '..', 'index.js'),
+      'ssh-proxy',
+      '127.0.0.1',
+      String(proxy.address().port),
+      'ssh.github.com',
+      '443',
+    ], {
+      cwd: path.join(__dirname, '..'),
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    child.stdin.end();
+    let stdout = '';
+    let stderr = '';
+    child.stdout.on('data', (chunk) => { stdout += chunk.toString(); });
+    child.stderr.on('data', (chunk) => { stderr += chunk.toString(); });
+
+    const code = await new Promise((resolve, reject) => {
+      child.once('exit', resolve);
+      child.once('error', reject);
+    });
+
+    assert.equal(code, 0, stderr);
+    assert.match(connectRequest, /^CONNECT ssh\.github\.com:443 HTTP\/1\.1\r\n/);
+    assert.match(connectRequest, /Host: ssh\.github\.com:443\r\n/);
+    assert.equal(stdout, 'hello');
+  } finally {
+    proxy.close();
+  }
 });
 
 test('claude version check runs with proxy environment already injected', () => {
