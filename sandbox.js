@@ -5,8 +5,10 @@ const path = require('path');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
 
+const SANDBOX_ENABLE = false;
+
 function isSandboxSupported() {
-  return process.platform === 'darwin';
+  return SANDBOX_ENABLE && process.platform === 'darwin';
 }
 
 function generateProfile() {
@@ -65,4 +67,4 @@ function spawnClaudeSync(args, env, opts = {}) {
   });
 }
 
-module.exports = { isSandboxSupported, spawnClaude, spawnClaudeSync };
+module.exports = { SANDBOX_ENABLE, isSandboxSupported, spawnClaude, spawnClaudeSync };

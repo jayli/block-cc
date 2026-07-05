@@ -17,6 +17,7 @@
     "block-cc": "./index.js"
   },
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "claude_check": "node claude-check/index.js"
   }
 }

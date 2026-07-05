@@ -9,6 +9,7 @@ const net = require('net');
 const { spawn, spawnSync } = require('child_process');
 
 const { buildClaudeEnv } = require('../index');
+const { SANDBOX_ENABLE, isSandboxSupported } = require('../sandbox');
 
 function once(emitter, event) {
   return new Promise((resolve, reject) => {
@@ -53,6 +54,11 @@ test('buildClaudeEnv preserves existing Git SSH command', () => {
   });
 
   assert.equal(env.GIT_SSH_COMMAND, 'ssh -i /tmp/custom-key');
+});
+
+test('sandbox is disabled by default', () => {
+  assert.equal(SANDBOX_ENABLE, false);
+  assert.equal(isSandboxSupported(), false);
 });
 
 test('ssh-proxy command tunnels bytes through HTTP CONNECT proxy', async () => {
@@ -180,10 +186,6 @@ test('claude version check runs with proxy environment already injected', () => 
   assert.deepEqual(records[1].argv, ['--version']);
   assert.match(records[1].HTTPS_PROXY, /^http:\/\/127\.0\.0\.1:\d+$/);
   assert.match(records[1].NODE_EXTRA_CA_CERTS, /ca\.crt$/);
-  if (process.platform === 'darwin') {
-    assert.equal(records[1].sandboxed, true);
-    const proxyPort = new URL(records[1].HTTPS_PROXY).port;
-    assert.equal(Number.isInteger(Number(proxyPort)), true);
-    assert.match(records[1].sandboxProfile, /remote ip "localhost:\*"/);
-  }
+  assert.equal(records[1].sandboxed, false);
+  assert.equal(records[1].sandboxProfile, undefined);
 });
