@@ -11,7 +11,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `npm test` — run all tests (Node built-in test runner)
 - `node --test test/proxy.test.js` — run proxy tests only
 - `node --test test/index.test.js` — run index tests only
+- `node --test test/claude-check-flow.test.js` — run claude-check flow tests only
+- `node --test test/claude-check-version.test.js` — run claude-check version/install tests only
+- `node --test test/claude-check-monitor.test.js` — run claude-check monitor tests only
 - `node index.js claude` — run the CLI directly (bypasses npx)
+- `npm run claude_check` — run the automated Claude Code version safety check once
 - `pm2 start claude-check/pm2-cron.sh --name block-cc-claude-check` — start the daily 07:00 Claude Code check scheduler
 
 ## Architecture
@@ -49,12 +53,26 @@ Once inside a TLS tunnel (HTTP headers parsed from the decrypted stream):
 - Profile is written to `os.tmpdir()` and cleaned up on process exit
 - Non-macOS platforms: falls back to direct `spawn('claude', ...)`, behavior unchanged
 
+**claude-check module** (`claude-check/`) is an automated nightly safety check for new Claude Code versions:
+- `index.js:runClaudeCheck()` — installs latest Claude Code, spawns it inside a proxy + lsof monitor for 60s, observes whether it makes direct TCP connections, then approves (pass), rejects (backdoor), or records an inconclusive result
+- `version.js` — reads/writes `max-version` (the last vetted version) and gets the installed Claude version via `claude --version`
+- `install.js` — installs a specific or latest Claude Code version, falling back to `npm install -g` if `claude install` fails
+- `proxy.js` — lightweight HTTP CONNECT proxy (identical design to root `proxy.js`); forced to `127.0.0.1` for the check sandbox
+- `monitor.js` — polls `lsof` at 1s intervals during the observation window, looking for Claude-owned TCP connections to non-localhost destinations
+- `result.js` — appends one-line summaries to `backdoor-version`, trims file to 1000 lines, tails stderr only for inconclusive results
+- `git.js` — `git pull --rebase` → `git add max-version backdoor-version` → `git commit` → optional `git push`
+- `scheduler.js` — calculates seconds until next local 07:00 and whether the current time is within the 5-minute run window; used by `pm2-cron.sh`
+- Env overrides: `CLAUDE_CHECK_DURATION_MS`, `CLAUDE_CHECK_INTERVAL_MS`, `CLAUDE_CHECK_SKIP_PUSH`, `CLAUDE_CHECK_SKIP_GIT`
+
 ## Key exports
 
 - `index.js`: `buildClaudeEnv({ baseEnv, proxyUrl, caCertPath })` — used by tests to verify env construction
 - `proxy.js`: `createProxy({ log, getSecureContext })` — creates the HTTP CONNECT server
 - `cert.js`: `setupCA()`, `getSecureContext(hostname)` — certificate lifecycle
 - `sandbox.js`: `spawnClaude(args, env, log)` — platform-aware Claude launcher; `isSandboxSupported()` — returns true on darwin
+- `claude-check/index.js`: `runClaudeCheck()`, `buildCheckEnv()`, `buildClaudeSpawnSpec()`, `defaultSpawnClaude()`
+- `claude-check/version.js`: `parseVersion()`, `compareVersions()`, `readMaxVersion()`, `writeMaxVersion()`, `getInstalledClaudeVersion()`
+- `claude-check/scheduler.js`: `nextRunAt()`, `secondsUntilNextRun()`, `shouldRunNow()`
 
 ## Constraints
 
