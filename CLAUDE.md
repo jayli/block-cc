@@ -12,6 +12,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `node --test test/proxy.test.js` — run proxy tests only
 - `node --test test/index.test.js` — run index tests only
 - `node index.js claude` — run the CLI directly (bypasses npx)
+- `pm2 start claude-check/pm2-cron.sh --name block-cc-claude-check` — start the daily 07:00 Claude Code check scheduler
 
 ## Architecture
 

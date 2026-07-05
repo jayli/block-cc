@@ -36,7 +36,7 @@
 
 ## Runtime Defaults
 
-- Observation duration: `180000` ms.
+- Observation duration: `60000` ms.
 - Poll interval: `1000` ms.
 - Suspicious sample cap in `backdoor-version`: `20`.
 - Environment overrides for tests/manual runs:
@@ -521,6 +521,7 @@ Expected: PASS.
 ### Task 7: PM2 Scheduler
 
 **Files:**
+- Create: `claude-check/scheduler.js`
 - Create: `claude-check/pm2-cron.sh`
 - Test: `test/claude-check-flow.test.js` or no automated test if shell portability becomes awkward.
 
@@ -535,11 +536,11 @@ set -u
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 
 next_sleep_seconds() {
-  node -e '...calculate ms until next local 07:00 and print seconds...'
+  node "$ROOT_DIR/claude-check/scheduler.js" next-sleep
 }
 
 should_run_now() {
-  node -e '...exit 0 only when now is within five minutes after local 07:00...'
+  node "$ROOT_DIR/claude-check/scheduler.js" should-run-now
 }
 
 while :; do

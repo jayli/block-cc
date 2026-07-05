@@ -156,10 +156,12 @@ This does not make the run risk-free. It is a pragmatic check for direct network
 - stderr tail when Claude exits unexpectedly or the checker fails.
 - capped suspicious samples when present.
 
+`backdoor-version` is capped to the newest 1000 lines after each append, so stale audit lines are removed from the head when the file grows too large.
+
 Example:
 
 ```text
-2026-07-05T23:00:00.000Z version=2.1.202 latest=2.1.202 result=pass duration_ms=180000 interval_ms=1000 suspicious=0
+2026-07-05T23:00:00.000Z version=2.1.202 latest=2.1.202 result=pass duration_ms=60000 interval_ms=1000 suspicious=0
 ```
 
 For a suspicious version, include indented sample lines after the summary.
@@ -187,6 +189,8 @@ pm2 start claude-check/pm2-cron.sh --name block-cc-claude-check
 ```
 
 It calculates the next local 07:00, sleeps until then, runs `npm run claude_check`, logs the result, then repeats.
+
+If the machine wakes up after missing the 07:00 target by more than five minutes, it skips that stale run and calculates the next future 07:00.
 
 This keeps the scheduler simple and avoids adding a cron dependency inside the repository.
 

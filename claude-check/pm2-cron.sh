@@ -8,30 +8,17 @@ timestamp() {
 }
 
 next_sleep_seconds() {
-  node -e '
-const now = new Date();
-const next = new Date(now);
-next.setHours(7, 0, 0, 0);
-if (next <= now) {
-  next.setDate(next.getDate() + 1);
-}
-const seconds = Math.max(1, Math.ceil((next.getTime() - now.getTime()) / 1000));
-process.stdout.write(String(seconds));
-'
+  node "$ROOT_DIR/claude-check/scheduler.js" next-sleep
 }
 
 should_run_now() {
-  node -e '
-const now = new Date();
-const target = new Date(now);
-target.setHours(7, 0, 0, 0);
-const elapsed = now.getTime() - target.getTime();
-process.exit(elapsed >= 0 && elapsed <= 5 * 60 * 1000 ? 0 : 1);
-'
+  node "$ROOT_DIR/claude-check/scheduler.js" should-run-now
 }
 
 while :; do
-  sleep "$(next_sleep_seconds)"
+  next_sleep="$(next_sleep_seconds)"
+  echo "$(timestamp) next claude_check in ${next_sleep}s"
+  sleep "$next_sleep"
 
   if ! should_run_now; then
     echo "$(timestamp) skipped missed 07:00 window"

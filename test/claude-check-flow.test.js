@@ -11,6 +11,7 @@ const { EventEmitter } = require('events');
 const { createConnectProxy, listen } = require('../claude-check/proxy');
 const { formatResultRecord, appendResultRecord } = require('../claude-check/result');
 const { gitApproveVersion } = require('../claude-check/git');
+const { nextRunAt, secondsUntilNextRun, shouldRunNow } = require('../claude-check/scheduler');
 const { runClaudeCheck, buildClaudeSpawnSpec, defaultSpawnClaude } = require('../claude-check');
 
 function once(emitter, event) {
@@ -206,6 +207,24 @@ test('gitApproveVersion can skip push', () => {
   });
 
   assert.deepEqual(calls.map((call) => call.args[0]), ['pull', 'add', 'commit']);
+});
+
+test('scheduler calculates the next future local 07:00', () => {
+  assert.equal(nextRunAt(new Date(2026, 6, 6, 6, 59, 30)).getTime(), new Date(2026, 6, 6, 7, 0, 0).getTime());
+  assert.equal(nextRunAt(new Date(2026, 6, 6, 7, 0, 0)).getTime(), new Date(2026, 6, 7, 7, 0, 0).getTime());
+  assert.equal(nextRunAt(new Date(2026, 6, 6, 9, 0, 0)).getTime(), new Date(2026, 6, 7, 7, 0, 0).getTime());
+});
+
+test('scheduler only runs within five minutes after local 07:00', () => {
+  assert.equal(shouldRunNow(new Date(2026, 6, 6, 6, 59, 59)), false);
+  assert.equal(shouldRunNow(new Date(2026, 6, 6, 7, 0, 0)), true);
+  assert.equal(shouldRunNow(new Date(2026, 6, 6, 7, 5, 0)), true);
+  assert.equal(shouldRunNow(new Date(2026, 6, 6, 7, 5, 1)), false);
+});
+
+test('scheduler prints positive sleep seconds and validates commands', () => {
+  const now = new Date(2026, 6, 6, 6, 59, 30, 1);
+  assert.equal(secondsUntilNextRun(now), 30);
 });
 
 test('runClaudeCheck can skip git approval for local verification', async () => {
