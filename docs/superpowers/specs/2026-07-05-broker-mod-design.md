@@ -12,6 +12,8 @@ Broker mode should preserve the core privacy boundary:
 - Claude Code's own network activity remains sandboxed and forced through the
   block-cc proxy.
 - Explicit user-entered `!cmd` shell commands run outside the sandbox.
+- Broker command output is injected back into Claude Code as conversation
+  context so Claude can reason over the result.
 - Claude-generated Bash commands are not automatically unsandboxed.
 
 The initial scope is exactly one explicit `!cmd` prompt. Natural-language
@@ -76,8 +78,9 @@ Claude Code receives a temporary hook configuration and broker environment:
   domain socket.
 - The broker executes the command outside the sandbox and streams output back to
   the hook.
-- The hook blocks the original prompt from entering Claude, because the command
-  has already been handled.
+- The hook returns a structured `UserPromptSubmit` response that blocks the
+  original `!cmd` prompt from being processed again and injects the broker
+  result through `hookSpecificOutput.additionalContext`.
 - `PreToolUse(Bash)` is optional in the initial implementation and can log or
   deny attempts that look like a replay of an already-brokered command, but it
   must not be required for command rewriting.
@@ -164,9 +167,31 @@ The hook passes the request JSON to `broker-run` over stdin. The command is not
 put on the process command line.
 
 If broker execution succeeds, the hook prints the command output in the hook
-result and returns a block decision for the original user prompt with a short
-reason such as "handled by block-cc broker". This prevents Claude from also
-processing the same prompt.
+result as structured JSON. The JSON includes:
+
+```json
+{
+  "decision": "block",
+  "reason": "handled by block-cc broker",
+  "suppressOriginalPrompt": true,
+  "hookSpecificOutput": {
+    "hookEventName": "UserPromptSubmit",
+    "additionalContext": "..."
+  }
+}
+```
+
+`additionalContext` contains a factual summary of:
+
+- original command
+- cwd
+- exit code
+- duration
+- stdout and stderr, subject to output limits
+- truncation marker or full-output path when applicable
+
+This prevents Claude from also processing the raw `!cmd` prompt while still
+making the broker result available to Claude's context.
 
 If broker execution fails, the hook returns a block decision with the broker
 error and captured command exit code. The hook process itself should still exit
@@ -175,6 +200,13 @@ failure may be interpreted as hook infrastructure failure rather than an
 intentional block. The original prompt is intentionally consumed and blocked
 whether or not the broker actually executed the command, so it should not
 continue into the model.
+
+Claude Code documentation states that `additionalContext` is inserted into
+Claude's context at the point where the hook fired and read on the next model
+request. The feasibility smoke test must verify whether a blocked
+`UserPromptSubmit` response with `additionalContext` triggers an immediate model
+turn or only becomes available on the next user prompt. If it only becomes
+available on the next prompt, the UI should clearly report that behavior.
 
 ### PreToolUse for Bash
 
@@ -266,10 +298,12 @@ Initial limits:
 
 - default command timeout: 10 minutes
 - configurable timeout through a block-cc-owned environment variable or CLI flag
-- maximum captured output returned through the hook response: 1 MiB combined
-  stdout and stderr
+- maximum `additionalContext` returned through the hook response: 10,000
+  characters, aligned with Claude Code hook output limits
+- maximum captured full output retained by broker: 1 MiB combined stdout and
+  stderr
 - after the output limit is reached, continue draining the child process but
-  truncate returned output with a clear marker
+  truncate returned context with a clear marker
 - preserve stdout/stderr as separate streams when the hook response format
   supports it; otherwise preserve arrival order with stream labels
 - on timeout, send SIGTERM, wait briefly, then SIGKILL if the process remains
@@ -362,6 +396,9 @@ Feasibility smoke test:
 - run the installed Claude Code with temporary hooks
 - confirm `UserPromptSubmit` receives the raw prompt for `!echo ok`
 - confirm the hook can block that prompt and display broker output
+- confirm broker output can be injected through `additionalContext`
+- determine whether blocked `UserPromptSubmit` plus `additionalContext` produces
+  an immediate assistant turn or only affects the next model request
 - confirm ordinary prompts continue into Claude
 - prove or disprove non-persistent hook injection without exposing broker
   capabilities through persistent user/project settings, command-line arguments,
