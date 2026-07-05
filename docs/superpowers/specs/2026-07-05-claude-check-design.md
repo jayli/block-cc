@@ -62,23 +62,26 @@ Proposed files:
 6. Create a temporary directory containing:
    - `home/` used as `HOME`.
    - `work/` used as Claude's current working directory.
-7. Spawn `claude` without `sandbox-exec`.
-8. Inject proxy environment variables pointing at the local proxy:
+7. Start the `lsof` polling loop before Claude is spawned, with the target PID filled in as soon as spawn returns. This reduces the chance of missing startup-time network activity.
+8. Spawn `claude` without `sandbox-exec`.
+9. Inject proxy environment variables pointing at the local proxy:
    - `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, `https_proxy`.
    - `NO_PROXY` and `no_proxy` limited to loopback addresses.
    - Disable updater and surveys as in the main CLI.
-9. Let the process run quietly for a bounded duration.
-10. Poll `lsof -i -n -P` and collect TCP/UDP records belonging to Claude-related processes.
-11. Stop Claude and the local proxy.
-12. Classify the sample:
+10. Let the process run quietly for a bounded duration.
+11. Poll `lsof -i -n -P` and collect TCP/UDP records belonging to the current check process tree.
+12. Stop Claude's process group and the local proxy.
+13. Remove the temporary directory.
+14. Classify the sample:
    - Pass if no direct external TCP or UDP records are found.
    - Fail if any Claude-related process opens external TCP outside the local proxy or any external UDP.
-13. Append a result record to `backdoor-version`.
-14. If pass:
+   - Fail as inconclusive if monitoring tools fail, Claude exits before the observation window, or the checker cannot confirm the full observation completed.
+15. Append a result record to `backdoor-version`.
+16. If pass:
    - Write latest version to `max-version`.
    - Commit `max-version` and `backdoor-version`.
    - Push the commit.
-15. If fail:
+17. If fail:
    - Leave `max-version` unchanged.
    - Exit non-zero after recording the suspicious result.
 
@@ -86,11 +89,15 @@ Proposed files:
 
 The checker uses `lsof` because it is available on macOS, works without root for the user's own processes, and fits the project's zero-dependency constraint.
 
-Process matching should include:
+Process matching should be scoped to the current check run:
 
 - The spawned Claude PID.
-- Child processes of the spawned PID when discoverable.
-- Processes whose command name includes `claude`.
+- Descendant processes of the spawned PID, discovered through `ps` parent PID traversal.
+- Claude-named processes only when they can be tied back to the spawned process tree.
+
+The monitor should avoid treating unrelated user Claude sessions as evidence for the checked version. A broad `lsof -c claude` scan may be useful as a fallback diagnostic, but it must not be the primary source of suspicious findings unless the process can be attributed to the check run.
+
+The monitor should start before `claude` is spawned. Until the child PID is known, it can collect no process-scoped records; once spawn returns, each polling tick should refresh the process tree and sample only those PIDs. If `ps` or `lsof` fails, the run is inconclusive and must not approve the version.
 
 The monitor parses `lsof -i -n -P` output and records at least:
 
@@ -124,10 +131,14 @@ To reduce exposure:
 
 - Use a temporary empty `HOME`.
 - Use a temporary empty working directory.
-- Avoid passing project-specific secrets beyond the minimal inherited environment needed to execute `claude`.
+- Build a minimal child environment from a small allowlist such as `PATH`, `HOME`, `TMPDIR`, locale variables, and proxy-related variables. Avoid passing project-specific secrets and API keys.
 - Keep the runtime bounded.
 - Run with stdio ignored or piped so the process does not prompt interactively.
-- Kill the process tree at the end of the observation window.
+- Spawn with `detached: true` so Claude owns a process group.
+- Kill the process group at the end of the observation window with `process.kill(-child.pid, 'SIGTERM')`, then escalate to `SIGKILL` if needed.
+- Capture stderr with a small cap, such as 64KB, so early crashes are diagnosable.
+- Treat early Claude exit before the observation window completes as inconclusive/failure, not pass.
+- Remove the temporary directory in cleanup.
 
 This does not make the run risk-free. It is a pragmatic check for direct network behavior, not a formal sandbox.
 
@@ -137,16 +148,18 @@ This does not make the run risk-free. It is a pragmatic check for direct network
 
 - ISO timestamp.
 - version.
+- latest npm version observed.
 - result: `pass` or `backdoor`.
 - npm latest source.
 - duration and polling interval.
 - suspicious sample count.
+- stderr tail when Claude exits unexpectedly or the checker fails.
 - capped suspicious samples when present.
 
 Example:
 
 ```text
-2026-07-05T23:00:00.000Z version=2.1.202 result=pass duration_ms=180000 interval_ms=1000 suspicious=0
+2026-07-05T23:00:00.000Z version=2.1.202 latest=2.1.202 result=pass duration_ms=180000 interval_ms=1000 suspicious=0
 ```
 
 For a suspicious version, include indented sample lines after the summary.
@@ -184,6 +197,7 @@ Add focused Node tests for:
 - Version parsing and comparison.
 - `max-version` read/write validation.
 - `lsof` parser classification for allowed proxy TCP, direct external TCP, loopback traffic, and UDP.
+- PID tree scoping so unrelated Claude processes are ignored.
 - Main flow behavior with mocked command runners:
   - no-op when latest is not newer.
   - pass updates files and calls git helpers.
