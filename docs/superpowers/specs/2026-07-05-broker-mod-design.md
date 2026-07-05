@@ -2,148 +2,151 @@
 
 ## Goal
 
-`block-cc` currently launches the whole Claude Code process tree inside a macOS
-`sandbox-exec` profile. This blocks direct outbound network access for Claude
-Code itself, but it also blocks user-initiated shell commands such as `!openssl`,
-`!npm test`, or other debugging commands that need external network access.
+`block-cc` launches Claude Code in a macOS `sandbox-exec` profile. This blocks
+Claude Code's direct outbound network access, but it also blocks user-entered
+debugging commands such as `!openssl`, `!npm test`, and other test commands that
+need external network access.
 
-Broker mode should preserve the core privacy boundary:
+Broker mode should preserve the practical privacy boundary:
 
 - Claude Code's own network activity remains sandboxed and forced through the
   block-cc proxy.
-- Explicit user-entered `!cmd` shell commands run outside the sandbox.
-- Broker command output is injected back into Claude Code as conversation
-  context so Claude can reason over the result.
+- Explicit user-entered `!cmd` shell commands can run outside the sandbox.
+- Broker command output is injected back into Claude Code context so Claude can
+  reason over the result.
 - Claude-generated Bash commands are not automatically unsandboxed.
 
 The initial scope is exactly one explicit `!cmd` prompt. Natural-language
-requests such as "run the network test" are intentionally not treated as
-explicit permission.
+requests such as "run the network test" are not treated as explicit permission.
 
-This design has a hard feasibility gate: the implementation must prove that the
-broker can distinguish a real `UserPromptSubmit` hook invocation from arbitrary
-sandboxed Bash code. If that cannot be proven with the installed Claude Code and
-Node.js standard library APIs, broker mode must be treated as a best-effort
-developer convenience mode, not a complete security boundary.
+## Updated Feasibility Findings
 
-Secure broker mode also depends on non-persistent hook injection. The
-implementation must prove that block-cc can install temporary hooks for the
-launched Claude Code process without writing broker capabilities into persistent
-user settings, project settings, command-line arguments, or files readable by
-ordinary sandboxed Bash. If this cannot be proven, secure broker mode must not
-launch.
+The installed Claude Code version used for design validation is `2.1.201`.
+Official Claude Code docs and local CLI help show:
+
+- `claude --settings <file-or-json>` can load session settings from a JSON file
+  or inline JSON.
+- Hooks are configured through settings and related configuration sources; there
+  is no dedicated `--hooks` CLI flag in `claude --help`.
+- `UserPromptSubmit` receives the raw user prompt before Claude processes it.
+- `UserPromptSubmit` supports `decision: "block"`, `suppressOriginalPrompt`,
+  and `hookSpecificOutput.additionalContext`.
+- `PreToolUse` supports `hookSpecificOutput.updatedInput`, which can replace a
+  tool's input before the tool runs.
+
+This changes the design direction. Broker mode should not execute commands
+directly from `UserPromptSubmit`. Instead:
+
+1. `UserPromptSubmit` records an exact explicit `!cmd`.
+2. Claude Code turns that prompt into a Bash tool call.
+3. `PreToolUse(Bash)` strictly matches the Bash command against an unconsumed
+   recorded `!cmd`.
+4. On match, `PreToolUse` uses `updatedInput.command` to replace the Bash
+   command with `broker-run <request-id>`.
+5. The broker executes only the already-registered command for that request id.
+
+This is stronger than a best-effort open broker because sandboxed Bash cannot
+ask the broker to execute arbitrary caller-provided command text. It is still not
+a cryptographic security boundary because the hook configuration and request
+metadata may be visible to the sandboxed process tree.
+
+## Security Position
+
+Broker mode is a **constrained broker**:
+
+- It is intended to prevent ordinary Claude-generated Bash commands from gaining
+  unsandboxed network access.
+- It only unsandboxes commands that match a recently recorded explicit user
+  `!cmd`.
+- It does not claim to resist a malicious or compromised Claude Code process
+  that can inspect hook settings, temp files, argv, and invoke internal helper
+  commands.
+
+If future Claude Code releases provide signed hook events, private per-hook
+capabilities, or an official unsandboxed user-command API, this design can be
+hardened into a stronger security boundary.
 
 ## Non-Goals
 
 - Do not make all Bash tool calls unsandboxed.
-- Do not attempt to infer user intent from arbitrary natural language.
+- Do not infer user intent from arbitrary natural language.
 - Do not change proxy block/MITM rules.
 - Do not modify global shell, SSH, or Claude Code user configuration
   permanently.
-- Do not depend on unsupported mutation of Claude Code tool input.
 - Do not support non-macOS kernel isolation in this design.
-
-## Feasibility Constraint
-
-Claude Code hooks support observing and controlling lifecycle events. The
-documented `PreToolUse` flow can inspect Bash tool input and return decisions
-such as deny, but it does not document a supported way to rewrite
-`tool_input.command`.
-
-Therefore broker mode must not rely on modifying an existing Bash tool call.
-Instead, it handles explicit `!cmd` earlier, at `UserPromptSubmit`, before the
-prompt is processed by Claude.
-
-There is a second, more important feasibility constraint. A hook process and a
-Claude-generated Bash process both run as descendants of the sandboxed Claude
-Code process and normally share the same user identity, filesystem visibility,
-and inherited environment. A reusable broker credential exposed to the hook is
-therefore also potentially exposed to Claude-generated Bash. The design is only
-security-valid if implementation can establish a hook-only capability.
+- Do not promise cryptographic hook-only authentication in Phase 1.
 
 ## Architecture
 
-`block-cc claude` will start three local components:
+`block-cc claude` starts:
 
 1. The existing HTTP CONNECT proxy.
 2. A new unsandboxed broker server owned by the parent `block-cc` process.
 3. Claude Code inside the existing macOS sandbox.
 
-Claude Code receives a temporary hook configuration and broker environment:
+Claude Code is launched with `--settings <tmp-settings.json>`. The temporary
+settings file contains hook commands for this session only. It is created in a
+private temp directory and removed on exit. The file path is visible in argv and
+the file may be readable from sandboxed Bash, so it must not contain reusable
+secrets that authorize arbitrary broker execution.
 
-- `UserPromptSubmit` hook detects prompts that are exactly explicit shell
-  commands.
-- For an eligible `!cmd`, the hook calls a sandboxed `broker-run` helper.
-- `broker-run` connects to the unsandboxed parent broker over a private Unix
-  domain socket.
-- The broker executes the command outside the sandbox and streams output back to
-  the hook.
-- The hook returns a structured `UserPromptSubmit` response that blocks the
-  original `!cmd` prompt from being processed again and injects the broker
-  result through `hookSpecificOutput.additionalContext`.
-- `PreToolUse(Bash)` is optional in the initial implementation and can log or
-  deny attempts that look like a replay of an already-brokered command, but it
-  must not be required for command rewriting.
+If the user already passes `--settings`, Phase 1 fails fast with a clear error
+instead of trying to merge settings. Settings merging is deferred because hook
+array ordering and user-defined hooks affect security and behavior.
 
-The broker must not expose a reusable "run arbitrary command" capability to the
-sandboxed Claude environment. Before implementing full broker execution, the
-project must run a feasibility spike to determine whether one of these
-authentication strategies is viable:
-
-- verified peer identity for Unix socket clients, if Node.js standard library
-  exposes enough information on macOS
-- a one-shot capability delivered only to the hook process and not visible to
-  Claude-generated Bash
-- a parent-observed hook invocation channel that sandboxed Bash cannot forge
-
-Any peer-identity strategy must name the exact Node.js standard library
-primitive used. Same-UID validation is not sufficient, because the hook process
-and Claude-generated Bash run as the same user. If Node's standard library
-cannot identify the hook process more specifically than UID, this strategy is
-rejected.
-
-If none of these is viable, broker mode can still be implemented as an explicit
-`!cmd` convenience mode, but its documentation and logs must state that a
-malicious or compromised Claude Code process with Bash execution can potentially
-reuse the broker path.
-
-The process boundary is:
+Process boundary:
 
 ```text
 block-cc parent process
   |- HTTP CONNECT proxy, unsandboxed
   |- broker server, unsandboxed
-  `- sandbox-exec claude
+  `- sandbox-exec claude --settings <tmp-settings.json>
        |- Claude network: sandboxed, localhost-only direct access
        |- Claude HTTP(S): block-cc proxy/MITM/blocklist
-       |- UserPromptSubmit hook
-       |    `- explicit !cmd: broker-run -> parent broker -> unsandboxed shell
-       `- Bash tool
-            `- Claude-generated commands remain sandboxed
+       |- UserPromptSubmit hook: records exact !cmd
+       |- PreToolUse(Bash): exact-match gate + updatedInput rewrite
+       |- Bash tool: runs broker-run <request-id> inside sandbox
+       `- broker-run: asks parent broker to execute registered command
 ```
+
+## Hook Configuration
+
+Use `--settings <tmp-settings.json>` as the preferred injection method.
+
+Requirements:
+
+- create temp directory with `fs.mkdtemp` under `os.tmpdir()`
+- directory mode `0700`
+- settings file mode `0600`
+- no permanent writes to `.claude/settings.local.json`
+- no reusable broker secret in settings JSON
+- cleanup on normal exit
+- log recovery instructions if cleanup fails
+
+Smoke test must verify that Claude Code 2.1.201 loads hooks from
+`--settings <tmp-settings.json>` in interactive mode and print mode where
+applicable.
 
 ## Hook Flow
 
 ### UserPromptSubmit
 
-The hook reads the JSON event from stdin and extracts:
+The hook reads JSON from stdin and extracts:
 
 - raw prompt text
-- current working directory, if available
-- session identifier, if available
+- current working directory, if present
+- session id, if present
 - timestamp
 
-The prompt is eligible only when all conditions hold:
+The prompt is eligible only when:
 
 - after trimming one trailing newline, the prompt starts with `!`
 - the prompt contains no embedded newline
 - the text after `!` is not empty
-- the entire prompt is only the command; there are no extra natural-language
-  instructions
+- the entire prompt is the shell command, with no extra natural-language text
 
-No shell-aware whitespace normalization is performed. The command is the exact
-byte-for-byte text after the leading `!`, minus only the single optional space
-immediately after `!`.
+No shell-aware normalization is performed. The command is the exact text after
+`!`, minus only one optional space immediately after `!`.
 
 Examples:
 
@@ -157,176 +160,161 @@ Rejected examples:
 - `please run !npm test`
 - `!`
 
-When eligible, the hook calls:
-
-```text
-node <block-cc index.js> broker-run
-```
-
-The hook passes the request JSON to `broker-run` over stdin. The command is not
-put on the process command line.
-
-If broker execution succeeds, the hook prints the command output in the hook
-result as structured JSON. The JSON includes:
+For an eligible command, `UserPromptSubmit` registers a pending broker request in
+the parent broker:
 
 ```json
 {
-  "decision": "block",
-  "reason": "handled by block-cc broker",
-  "suppressOriginalPrompt": true,
+  "requestId": "...",
+  "command": "npm test",
+  "cwd": "...",
+  "createdAt": 1234567890
+}
+```
+
+It then allows the prompt to continue. It may add minimal
+`additionalContext` such as "block-cc registered explicit command request
+<request-id>", but it must not execute the command itself.
+
+### PreToolUse for Bash
+
+The hook reads JSON from stdin and extracts `tool_input.command`.
+
+It compares the Bash command with pending explicit commands using deterministic
+FIFO matching:
+
+- candidate request is unconsumed
+- candidate request is not expired
+- candidate command is byte-for-byte equal to `tool_input.command`
+- if both hook event and request have session id, session ids must match
+- if the hook event lacks session id, match only within this broker process by
+  command equality and FIFO order, and log `session_id_missing`
+- if multiple requests match, choose the oldest registered request
+
+This avoids races where a later `!cmd` prevents an earlier matching Bash tool
+call from being brokered, and gives repeated identical commands predictable
+ordering.
+
+On match, it returns a structured hook response with `updatedInput`:
+
+```json
+{
   "hookSpecificOutput": {
-    "hookEventName": "UserPromptSubmit",
-    "additionalContext": "..."
+    "hookEventName": "PreToolUse",
+    "permissionDecision": "allow",
+    "updatedInput": {
+      "command": "node <block-cc index.js> broker-run <request-id>",
+      "description": "Run explicit user command through block-cc broker"
+    }
   }
 }
 ```
 
-`additionalContext` contains a factual summary of:
+The original user command is not embedded in the rewritten Bash command. The
+request id is not sufficient to execute arbitrary command text; the broker only
+looks up registered pending commands.
+
+On non-match, the hook leaves the Bash command unchanged. The command therefore
+runs inside the sandbox and remains subject to the existing network restrictions.
+
+### Broker-Run
+
+`broker-run <request-id>` runs inside the sandboxed Bash process. It connects to
+the parent broker over a private Unix domain socket and asks to consume the
+registered request id.
+
+The broker validates:
+
+- request id exists
+- request id has not been consumed
+- request is recent
+- request was registered by `UserPromptSubmit`
+- command is stored server-side; caller does not provide command text
+- cwd resolves and satisfies cwd policy
+
+The broker then executes the registered command outside the sandbox.
+
+### PostToolUse and Context Injection
+
+The broker-run command prints a compact structured result to stdout. Because the
+rewritten command is a normal Bash tool execution, Claude Code should receive the
+Bash tool output through its normal tool-result path.
+
+Additionally, `PostToolUse(Bash)` can inspect broker-run output and add
+`hookSpecificOutput.additionalContext` with a concise summary:
 
 - original command
 - cwd
 - exit code
 - duration
-- stdout and stderr, subject to output limits
-- truncation marker or full-output path when applicable
+- stdout/stderr excerpt
+- truncation marker or output file path
 
-This prevents Claude from also processing the raw `!cmd` prompt while still
-making the broker result available to Claude's context.
+Smoke tests must verify:
 
-If broker execution fails, the hook returns a block decision with the broker
-error and captured command exit code. The hook process itself should still exit
-successfully after emitting a structured hook response, because hook process
-failure may be interpreted as hook infrastructure failure rather than an
-intentional block. The original prompt is intentionally consumed and blocked
-whether or not the broker actually executed the command, so it should not
-continue into the model.
+- the Bash tool result is visible to the user
+- Claude can reason over the broker output in the same turn or, if not, on the
+  next model request
+- `PostToolUse.additionalContext` behavior with broker-run output
 
-Claude Code documentation states that `additionalContext` is inserted into
-Claude's context at the point where the hook fired and read on the next model
-request. The feasibility smoke test must verify whether a blocked
-`UserPromptSubmit` response with `additionalContext` triggers an immediate model
-turn or only becomes available on the next user prompt. If it only becomes
-available on the next prompt, the UI should clearly report that behavior.
-
-### PreToolUse for Bash
-
-The initial broker mode does not require `PreToolUse` for successful operation.
-It can be added later for observability:
-
-- log when Claude tries to run a network-capable command inside the sandbox
-- optionally deny exact replay of a command already handled by `UserPromptSubmit`
-
-It must not be used to rewrite commands unless a future Claude Code version
-documents a supported mutation API and a smoke test proves it works.
+If normal Bash tool output already enters Claude context reliably,
+`PostToolUse.additionalContext` may be redundant and should be kept minimal.
 
 ## Broker Protocol
 
-The broker listens on a per-run Unix domain socket under a private temporary
-directory. TCP fallback is disabled by default because the broker runs commands
-outside the sandbox.
+The broker listens on a per-run Unix domain socket under a private temp
+directory. TCP fallback is disabled by default.
 
 Temporary path requirements:
 
 - create with `fs.mkdtemp` under `os.tmpdir()`
+- keep socket path short enough for macOS Unix socket limits
 - directory mode `0700`
 - state files mode `0600`
-- avoid symlink-following writes
-- remove the directory and socket on parent process exit
+- remove directory and socket on parent process exit
 
-The sandboxed `broker-run` helper receives request data through stdin, not
-command-line arguments.
-
-No reusable broker secret may be placed in the general Claude environment. A
-secret inherited by Claude is also inherited by Claude-generated Bash and is not
-an adequate security boundary.
-
-If the feasibility spike proves a hook-only capability, `broker-run` sends that
-capability through the protected channel. If not, the protocol is explicitly
-best-effort and must only claim to preserve normal workflow intent, not to
-resist hostile sandboxed Bash.
-
-`broker-run` sends a single JSON request:
+The request model is intentionally server-side:
 
 ```json
 {
-  "type": "run",
-  "capability": "...",
-  "requestId": "...",
-  "cwd": "...",
-  "command": "..."
+  "type": "consume",
+  "requestId": "..."
 }
 ```
 
-The broker validates:
+The broker does not accept command text from `broker-run`. This limits abuse by
+sandboxed Bash to attempting to consume an already-registered explicit user
+command.
 
-- capability is valid for this hook invocation, if a hook-only capability is
-  available
-- request id has not been used
-- command is non-empty
-- request age is within the configured TTL
-- cwd resolves successfully and satisfies the cwd policy below
+## Cwd Policy
 
-### Cwd Policy
+Initial policy:
 
-The initial cwd policy is:
-
-- use the cwd reported by the hook event when available
+- use cwd reported by hook event when available
 - otherwise use the original cwd from which `block-cc claude` was launched
 - resolve with `fs.realpath`
 - reject if the path cannot be resolved, no longer exists, or is not a directory
-- do not restrict to the original workspace in the initial design, because user
+- do not restrict to original workspace in Phase 1, because explicit user
   commands may intentionally operate elsewhere
 
-This intentionally preserves user shell behavior. A later hardening mode may
-restrict broker execution to the original workspace.
-
-The broker executes the command with the user's default shell:
-
-```text
-${SHELL:-/bin/sh} -lc <command>
-```
-
-It streams stdout and stderr back to `broker-run` and returns the child exit
-code.
-
-### Output, Timeout, and Cancellation
-
-Broker-run must be bounded so an explicit command cannot wedge Claude Code
-indefinitely through the hook path.
-
-Initial limits:
-
-- default command timeout: 10 minutes
-- configurable timeout through a block-cc-owned environment variable or CLI flag
-- maximum `additionalContext` returned through the hook response: 10,000
-  characters, aligned with Claude Code hook output limits
-- maximum captured full output retained by broker: 1 MiB combined stdout and
-  stderr
-- after the output limit is reached, continue draining the child process but
-  truncate returned context with a clear marker
-- preserve stdout/stderr as separate streams when the hook response format
-  supports it; otherwise preserve arrival order with stream labels
-- on timeout, send SIGTERM, wait briefly, then SIGKILL if the process remains
-  alive
-
-Interactive commands are not supported in the initial broker hook path. Commands
-that require stdin should fail or hang until timeout unless a later design adds
-interactive streaming.
+A future hardening mode may restrict broker execution to the original workspace.
 
 ## Environment Handling
 
-Broker commands execute with an environment derived from a before/after snapshot
-captured by the parent `block-cc` process.
+Broker commands execute with an environment derived from the original parent
+environment captured before block-cc injects Claude-specific variables.
 
 Rules:
 
-- start from the original parent environment captured before block-cc injects
-  Claude-specific variables
-- preserve any original user-provided `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`,
+- preserve original user-provided `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`,
   `https_proxy`, `NO_PROXY`, `no_proxy`, `GIT_SSH_COMMAND`, and
   `NODE_EXTRA_CA_CERTS`
 - remove block-cc-generated values for those variables when they were absent in
   the original environment
+- remove block-cc-generated Claude-only disable flags when they were absent in
+  the original environment: `DISABLE_AUTOUPDATER`,
+  `CLAUDE_CODE_DISABLE_UPDATE_CHECK`, and
+  `CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY`
 - include only minimal block-cc diagnostic variables needed for broker tracing
 
 This preserves direct-network behavior for explicit user commands while avoiding
@@ -337,12 +325,69 @@ The sandboxed Claude process keeps the existing environment behavior:
 - `HTTP_PROXY` and `HTTPS_PROXY` point to the block-cc proxy.
 - `NODE_EXTRA_CA_CERTS` includes the local CA when available.
 - disable-update and disable-survey variables remain injected.
-- `GIT_SSH_COMMAND` can continue to route Git SSH through the proxy for
-  sandboxed Git SSH commands.
+- `GIT_SSH_COMMAND` can continue to route sandboxed Git SSH through the proxy.
+
+## Output, Timeout, and Cancellation
+
+Initial limits:
+
+- default command timeout: 10 minutes
+- configurable timeout through a block-cc CLI flag or environment variable
+- maximum result printed to Bash stdout: 1 MiB combined stdout/stderr
+- maximum context injected through hooks: 10,000 characters
+- after output limit is reached, continue draining child process and truncate
+  displayed/context output with a clear marker
+- preserve stdout/stderr labels; exact byte interleaving is not guaranteed
+- on timeout, send SIGTERM, wait briefly, then SIGKILL
+- if Claude exits or broker socket disconnects, terminate active broker child
+  processes
+
+Interactive commands are not supported in Phase 1. Commands requiring stdin may
+fail or time out.
+
+## Concurrency
+
+Phase 1 queues broker commands. Only one broker command executes at a time per
+Claude session.
+
+Rationale:
+
+- avoids interleaved output
+- preserves prompt/result ordering
+- keeps context injection deterministic
+
+If a second explicit `!cmd` arrives while one is running, it waits in FIFO order.
+
+## Logging
+
+Log broker metadata to the existing block-cc log:
+
+- explicit command detected
+- request id registered
+- request id consumed
+- execution start and exit code
+- duration
+- output truncation
+- rejection reason
+
+Do not log full command output. Do not log full command text by default, because
+shell commands often contain tokens, URLs, and inline secrets. Default logs
+should include command length and a short hash. Full command logging can be an
+opt-in debug mode.
+
+## Failure Behavior
+
+- If hooks are unavailable, broker mode fails closed and Claude remains in the
+  current strict sandbox behavior.
+- If `UserPromptSubmit` registration fails, the prompt continues unchanged and
+  normal sandbox behavior applies.
+- If `PreToolUse` cannot match the command, it leaves Bash unchanged.
+- If broker-run cannot consume the request id, it exits non-zero and prints a
+  clear error through Bash output.
+- If command execution exits non-zero, broker-run returns that exit code and
+  prints captured output.
 
 ## Security Model
-
-The trust boundary is explicit user shell input.
 
 Allowed:
 
@@ -354,85 +399,56 @@ Not automatically allowed:
 
 - Claude decides to run `curl`.
 - Claude transforms "please debug this" into a networked Bash command.
-- Claude tries to run any Bash command that did not come from an exact `!cmd`
-  prompt.
+- Claude runs a Bash command that differs from the last explicit `!cmd`.
 
-This security claim only holds if the feasibility gate proves hook-only broker
-authentication. Without that proof, the mode is still useful for developer
-workflows, but it cannot claim to prevent a malicious Claude-generated Bash
-command from attempting to use the broker.
+Known limitation:
 
-## Failure Behavior
-
-- If hooks are unavailable, broker mode fails closed and Claude remains in the
-  current strict sandbox behavior.
-- If the broker is unavailable for an explicit `!cmd`, the hook blocks the
-  prompt and reports the broker error.
-- If capability validation fails, broker-run reports rejection in the structured
-  hook response and logs the reason.
-- If command execution exits non-zero, broker-run reports the command exit code
-  in the structured hook response while the hook process itself exits
-  successfully.
-
-## Logging
-
-Log broker decisions to the existing block-cc log:
-
-- explicit user command detected
-- broker execution start and exit code
-- broker rejection reason
-- hook or broker setup failure
-
-Do not log full command output. Do not log full command text by default, because
-shell commands often contain tokens, URLs, and inline secrets. Default logs
-should include command metadata only, such as command length, a short hash, exit
-code, duration, and whether output was truncated. Full command logging can be a
-separate opt-in debug mode.
+- A malicious or compromised Claude Code process with Bash execution may be able
+  to inspect hook configuration and attempt to invoke `broker-run` directly.
+  Because broker-run cannot provide command text, the worst Phase 1 path should
+  be consuming a pending explicit user request, not arbitrary command execution.
+  This must be verified by adversary tests.
 
 ## Testing Plan
 
-Feasibility smoke test:
+Feasibility smoke tests:
 
-- run the installed Claude Code with temporary hooks
-- confirm `UserPromptSubmit` receives the raw prompt for `!echo ok`
-- confirm the hook can block that prompt and display broker output
-- confirm broker output can be injected through `additionalContext`
-- determine whether blocked `UserPromptSubmit` plus `additionalContext` produces
-  an immediate assistant turn or only affects the next model request
-- confirm ordinary prompts continue into Claude
-- prove or disprove non-persistent hook injection without exposing broker
-  capabilities through persistent user/project settings, command-line arguments,
-  or sandbox-readable files
-- prove or disprove hook-only broker authentication with a concrete adversary
-  test:
-  - adversary is Claude-generated Bash inside the sandbox
-  - adversary can read inherited environment variables
-  - adversary can read argv-visible hook commands
-  - adversary can read project files
-  - adversary can inspect temp paths allowed by the sandbox
-  - adversary can invoke `node index.js broker-run`
-  - broker execution must still fail in secure mode
-- negative test: a Claude-generated Bash command must not be able to trigger
-  broker execution unless the mode is explicitly documented as best-effort
+- `claude --settings <tmp-settings.json>` loads temporary hooks.
+- `UserPromptSubmit` receives raw prompt for `!echo ok`.
+- `PreToolUse(Bash)` receives `tool_input.command`.
+- `PreToolUse.updatedInput.command` actually replaces the Bash command.
+- `sandbox-exec` still allows sandboxed hook/broker-run processes to connect to
+  the parent Unix domain socket.
+- direct external TCP from sandboxed Bash remains blocked.
+- broker-executed command runs outside the sandbox and can perform intended
+  external network access.
+- Normal Bash tool output from broker-run is visible to the user.
+- Claude can reason over broker-run output in the same turn, or the behavior is
+  documented if only available on the next request.
+- `PostToolUse.additionalContext` works as expected, if used.
+
+Adversary tests:
+
+- A Claude-generated Bash command cannot ask broker to execute arbitrary command
+  text.
+- Direct `node index.js broker-run <fake-id>` fails.
+- Reusing a consumed request id fails.
+- Consuming an expired request id fails.
+- Invoking broker-run before matching `PreToolUse` registration fails.
 
 Unit tests:
 
 - explicit `!cmd` detection
 - multi-line and natural-language prompt rejection
-- capability validation, if available
+- strict command matching
+- FIFO matching with repeated identical commands
+- session-id-present and session-id-missing matching behavior
 - request id single-use validation
-- environment restoration for broker commands
-- cwd resolution and rejection cases
-- broker output and exit-code propagation
+- request expiry
+- environment restoration
+- cwd resolution and rejection
 - output truncation
-- timeout and process termination behavior
-
-Integration tests with local sockets:
-
-- `broker-run` executes a command outside a simulated sandbox boundary
-- stdout, stderr, and exit code are preserved
-- stale or reused request is rejected
-- broker socket under private temp directory is cleaned up
+- timeout and child termination
 
 Regression tests:
 
@@ -442,13 +458,18 @@ Regression tests:
 
 ## Open Questions
 
-1. The exact Claude Code hook JSON shape must be verified against the installed
-   Claude Code version before implementation.
-2. The exact JSON block decision for `UserPromptSubmit` must be verified during
-   the feasibility smoke test.
-3. The implementation needs a verified non-persistent hook configuration
-   strategy that does not expose broker capabilities through persistent user or
-   project settings, command-line arguments, or sandbox-readable files.
-4. The implementation must determine whether hook-only broker authentication is
-   possible. If not, the design must be explicitly downgraded to best-effort
-   developer convenience mode before coding full broker execution.
+1. Confirm exact JSON shapes for `UserPromptSubmit`, `PreToolUse`,
+   `PostToolUse`, `updatedInput`, and `additionalContext` on Claude Code
+   `2.1.201`.
+2. Confirm whether broker-run Bash output is enough for Claude context, or
+   whether `PostToolUse.additionalContext` is required.
+3. Confirm macOS Unix socket path behavior from the chosen temp directory.
+4. Decide whether future secure mode requires upstream support such as signed
+   hook events, private hook-only capabilities, or an official unsandboxed
+   user-command API.
+
+## References
+
+- Claude Code hooks reference: `https://code.claude.com/docs/en/hooks`
+- Claude Code CLI reference: `https://code.claude.com/docs/en/cli-reference`
+- Claude Code settings reference: `https://code.claude.com/docs/en/settings`
