@@ -4,9 +4,10 @@
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { spawn, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 const { createProxy } = require('./proxy');
 const { setupCA, getSecureContext } = require('./cert');
+const { spawnClaude } = require('./sandbox');
 
 const USAGE = 'Usage: npx block-cc claude';
 
@@ -62,9 +63,12 @@ function createLogger() {
 }
 
 function buildClaudeEnv({ baseEnv, proxyUrl, caCertPath }) {
-  const extraCerts = caCertPath && baseEnv.NODE_EXTRA_CA_CERTS
-    ? `${baseEnv.NODE_EXTRA_CA_CERTS}:${caCertPath}`
-    : (caCertPath || baseEnv.NODE_EXTRA_CA_CERTS || '');
+  const existingCerts = baseEnv.NODE_EXTRA_CA_CERTS || '';
+
+  let extraCerts = existingCerts;
+  if (caCertPath && !existingCerts.split(':').includes(caCertPath)) {
+    extraCerts = existingCerts ? `${existingCerts}:${caCertPath}` : caCertPath;
+  }
 
   const env = {
     ...baseEnv,
@@ -129,10 +133,7 @@ function main() {
 
     checkClaude(env);
 
-    const claude = spawn('claude', args.slice(1), {
-      env,
-      stdio: 'inherit',
-    });
+    const claude = spawnClaude(args.slice(1), env, log);
 
     claude.on('error', (err) => {
       log(`Claude spawn failed: ${err.message}`);

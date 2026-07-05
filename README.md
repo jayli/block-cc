@@ -24,7 +24,7 @@ npx block-cc claude -c          # 等同于 claude -c
 
 ## 原理
 
-三层拦截，确保万无一失：
+四层拦截，确保万无一失：
 
 **第一层：网络代理拦截** — 启动本地 HTTP CONNECT 代理，在 TLS 握手之前阻断必要的域名。
 

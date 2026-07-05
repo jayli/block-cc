@@ -1,0 +1,49 @@
+'use strict';
+
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const { spawn } = require('child_process');
+
+function isSandboxSupported() {
+  return process.platform === 'darwin';
+}
+
+function generateProfile() {
+  const profile = [
+    '(version 1)',
+    '(allow default)',
+    '(deny network-outbound)',
+    '(allow network-outbound (remote ip "localhost:*"))',
+  ].join('\n');
+
+  const profilePath = path.join(os.tmpdir(), `block-cc-sandbox-${process.pid}.sb`);
+  fs.writeFileSync(profilePath, profile);
+  return profilePath;
+}
+
+function spawnClaude(args, env, log) {
+  if (isSandboxSupported()) {
+    const profilePath = generateProfile();
+    log('Sandbox mode enabled (macOS)');
+
+    const child = spawn('sandbox-exec', ['-f', profilePath, 'claude', ...args], {
+      env,
+      stdio: 'inherit',
+    });
+
+    child.on('exit', (code, signal) => {
+      try { fs.unlinkSync(profilePath); } catch (_) {}
+    });
+
+    return child;
+  }
+
+  log(`Sandbox not supported on ${process.platform}, using direct spawn`);
+  return spawn('claude', args, {
+    env,
+    stdio: 'inherit',
+  });
+}
+
+module.exports = { isSandboxSupported, spawnClaude };
