@@ -30,8 +30,17 @@ function writeMaxVersion(rootDir, version) {
 }
 
 function getLatestClaudeVersion({ run }) {
-  const result = run('npm', ['view', '@anthropic-ai/claude-code', 'version']);
+  const result = run('npm', ['view', '@anthropic-ai/claude-code', 'version'], { timeoutMs: 15000 });
   const version = String(result.stdout || '').trim();
+  parseVersion(version);
+  return version;
+}
+
+function getInstalledClaudeVersion({ run }) {
+  const result = run('claude', ['--version']);
+  const output = `${result.stdout || ''}\n${result.stderr || ''}`;
+  const match = output.match(/\b(\d+\.\d+\.\d+)\b/);
+  const version = match ? match[1] : '';
   parseVersion(version);
   return version;
 }
@@ -42,4 +51,5 @@ module.exports = {
   readMaxVersion,
   writeMaxVersion,
   getLatestClaudeVersion,
+  getInstalledClaudeVersion,
 };

@@ -4,6 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const DEFAULT_SAMPLE_LIMIT = 20;
+const MAX_RESULT_LINES = 1000;
 const STDERR_LIMIT = 64 * 1024;
 const STDERR_TAIL_LINES = 12;
 
@@ -43,9 +44,16 @@ function formatResultRecord(result) {
     }
   }
 
-  const tail = stderrTail(result.stderr);
-  if (tail) {
-    lines.push(`  stderr_tail ${tail}`);
+  if (result.result === 'inconclusive') {
+    const tail = stderrTail(result.stderr);
+    if (tail) {
+      lines.push(`  stderr_tail ${tail}`);
+    }
+
+    const stdoutTail = stderrTail(result.stdout);
+    if (stdoutTail) {
+      lines.push(`  stdout_tail ${stdoutTail}`);
+    }
   }
 
   if (result.error) {
@@ -56,7 +64,18 @@ function formatResultRecord(result) {
 }
 
 function appendResultRecord(rootDir, result) {
-  fs.appendFileSync(path.join(rootDir, 'backdoor-version'), formatResultRecord(result));
+  const file = path.join(rootDir, 'backdoor-version');
+  fs.appendFileSync(file, formatResultRecord(result));
+  trimResultFile(file);
 }
 
-module.exports = { formatResultRecord, appendResultRecord };
+function trimResultFile(file, maxLines = MAX_RESULT_LINES) {
+  const text = fs.readFileSync(file, 'utf8');
+  const hadFinalNewline = text.endsWith('\n');
+  const lines = text.split(/\r?\n/);
+  if (hadFinalNewline) lines.pop();
+  if (lines.length <= maxLines) return;
+  fs.writeFileSync(file, `${lines.slice(-maxLines).join('\n')}\n`);
+}
+
+module.exports = { formatResultRecord, appendResultRecord, trimResultFile };

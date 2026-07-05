@@ -9,14 +9,20 @@ function failureMessage(err) {
 }
 
 function installClaudeVersion(version, { run }) {
-  parseVersion(version);
+  const explicitVersion = Boolean(version);
+  if (explicitVersion) parseVersion(version);
+  const claudeArgs = explicitVersion ? ['install', version] : ['install'];
 
   let claudeError;
   try {
-    run('claude', ['install', version], { stdio: 'inherit' });
+    run('claude', claudeArgs, { stdio: 'inherit' });
     return;
   } catch (err) {
     claudeError = err;
+  }
+
+  if (!explicitVersion) {
+    throw new Error(`Failed to install latest Claude Code: claude install failed: ${failureMessage(claudeError)}`);
   }
 
   try {

@@ -12,6 +12,7 @@ const {
   readMaxVersion,
   writeMaxVersion,
   getLatestClaudeVersion,
+  getInstalledClaudeVersion,
 } = require('../claude-check/version');
 const { installClaudeVersion } = require('../claude-check/install');
 
@@ -40,8 +41,8 @@ test('readMaxVersion and writeMaxVersion use repository max-version file', () =>
 test('getLatestClaudeVersion reads npm view output', () => {
   const calls = [];
   const latest = getLatestClaudeVersion({
-    run(command, args) {
-      calls.push({ command, args });
+    run(command, args, options) {
+      calls.push({ command, args, options });
       return { stdout: '2.1.202\n' };
     },
   });
@@ -50,6 +51,7 @@ test('getLatestClaudeVersion reads npm view output', () => {
   assert.deepEqual(calls[0], {
     command: 'npm',
     args: ['view', '@anthropic-ai/claude-code', 'version'],
+    options: { timeoutMs: 15000 },
   });
 });
 
@@ -57,6 +59,29 @@ test('getLatestClaudeVersion rejects invalid npm output', () => {
   assert.throws(() => getLatestClaudeVersion({
     run() {
       return { stdout: 'latest\n' };
+    },
+  }), /Invalid version/);
+});
+
+test('getInstalledClaudeVersion reads claude --version output', () => {
+  const calls = [];
+  const version = getInstalledClaudeVersion({
+    run(command, args) {
+      calls.push({ command, args });
+      return { stdout: '2.1.201 (Claude Code)\n' };
+    },
+  });
+
+  assert.equal(version, '2.1.201');
+  assert.deepEqual(calls, [
+    { command: 'claude', args: ['--version'] },
+  ]);
+});
+
+test('getInstalledClaudeVersion rejects output without version', () => {
+  assert.throws(() => getInstalledClaudeVersion({
+    run() {
+      return { stdout: 'Claude Code\n' };
     },
   }), /Invalid version/);
 });
@@ -94,6 +119,21 @@ test('installClaudeVersion does not fall back when claude install succeeds', () 
 
   assert.deepEqual(calls, [
     { command: 'claude', args: ['install', '2.1.202'] },
+  ]);
+});
+
+test('installClaudeVersion can install latest without explicit version', () => {
+  const calls = [];
+
+  installClaudeVersion(null, {
+    run(command, args) {
+      calls.push({ command, args });
+      return { stdout: '' };
+    },
+  });
+
+  assert.deepEqual(calls, [
+    { command: 'claude', args: ['install'] },
   ]);
 });
 
