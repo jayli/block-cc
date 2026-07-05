@@ -5,8 +5,10 @@ const path = require('path');
 const os = require('os');
 const { spawn, spawnSync } = require('child_process');
 
+const SANDBOX_ENABLED = false;
+
 function isSandboxSupported() {
-  return process.platform === 'darwin';
+  return SANDBOX_ENABLED && process.platform === 'darwin';
 }
 
 function generateProfile() {
