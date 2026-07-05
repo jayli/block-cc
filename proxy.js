@@ -213,6 +213,10 @@ function sendNoContentResponse(tlsSocket) {
   );
 }
 
+function formatMitmLog(message, reqPath) {
+  return `${message} path=${reqPath || 'unknown'}`;
+}
+
 function createProxy(opts) {
   const log = (opts && opts.log) || (() => {});
   const getSecureContext = (opts && opts.getSecureContext) || (() => { throw new Error('secureContext not configured'); });
@@ -231,14 +235,14 @@ function createProxy(opts) {
     }
 
     if (shouldMitm(host)) {
-      log(`MITM: ${host}:${port}`);
+      log(formatMitmLog(`MITM: ${host}:${port}`, 'CONNECT'));
       clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
 
       let sc;
       try {
         sc = getSecureContext(host);
       } catch (err) {
-        log(`MITM setup failed for ${host}: ${err.message}`);
+        log(formatMitmLog(`MITM setup failed for ${host}: ${err.message}`, 'CONNECT'));
         clientSocket.destroy();
         return;
       }
@@ -254,7 +258,7 @@ function createProxy(opts) {
       const headerTimer = setTimeout(() => {
         if (handled) return;
         handled = true;
-        log(`Blocked incomplete MITM header: ${host}:${port}`);
+        log(formatMitmLog(`Blocked incomplete MITM header: ${host}:${port}`));
         tlsSocket.destroy();
       }, headerTimeoutMs);
 
@@ -269,7 +273,7 @@ function createProxy(opts) {
         if (buffer.length > maxHeaderBytes) {
           handled = true;
           cleanupHeaderTimer();
-          log(`Blocked oversized MITM header: ${host}:${port}`);
+          log(formatMitmLog(`Blocked oversized MITM header: ${host}:${port}`));
           tlsSocket.destroy();
           return;
         }
@@ -284,7 +288,7 @@ function createProxy(opts) {
         const request = parseRequestLine(lines[0]);
 
         if (!request) {
-          log(`Blocked malformed MITM request: ${host}:${port}`);
+          log(formatMitmLog(`Blocked malformed MITM request: ${host}:${port}`));
           tlsSocket.destroy();
           return;
         }
@@ -293,14 +297,14 @@ function createProxy(opts) {
         const reqPath = normalizeRequestTarget(request.target);
 
         if (method === 'CONNECT') {
-          log(`Blocked CONNECT inside MITM: ${host}:${port}`);
+          log(formatMitmLog(`Blocked CONNECT inside MITM: ${host}:${port}`, reqPath));
           tlsSocket.destroy();
           return;
         }
 
         if (reqPath && reqPath.startsWith('/api/web/domain_info')) {
           const domain = parseDomainFromPath(reqPath);
-          log(`Faked domain check: ${domain}`);
+          log(formatMitmLog(`Faked domain check: ${domain}`, reqPath));
           const body = JSON.stringify({ domain, can_fetch: true });
           tlsSocket.end(
             'HTTP/1.1 200 OK\r\n' +
@@ -310,13 +314,13 @@ function createProxy(opts) {
             body
           );
         } else if (host.toLowerCase() === 'api.anthropic.com' && reqPath && reqPath.startsWith('/v1/')) {
-          log(`Blocked API request: ${host}:${port}${reqPath}`);
+          log(formatMitmLog(`Blocked API request: ${host}:${port}`, reqPath));
           sendTextResponse(tlsSocket, 403, 'Forbidden', 'blocked');
         } else if (host.toLowerCase() === 'api.anthropic.com' && reqPath && reqPath.startsWith('/api/event_logging/')) {
-          log(`Blocked event logging request: ${host}:${port}${reqPath}`);
+          log(formatMitmLog(`Blocked event logging request: ${host}:${port}`, reqPath));
           sendNoContentResponse(tlsSocket);
         } else {
-          log(`Blocked via MITM: ${host}:${port}${reqPath || ''}`);
+          log(formatMitmLog(`Blocked via MITM: ${host}:${port}`, reqPath));
           tlsSocket.destroy();
         }
       });

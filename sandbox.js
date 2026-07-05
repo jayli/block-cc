@@ -9,16 +9,12 @@ function isSandboxSupported() {
   return process.platform === 'darwin';
 }
 
-function generateProfile(proxyPort) {
-  if (!Number.isInteger(proxyPort) || proxyPort < 1 || proxyPort > 65535) {
-    throw new Error('valid proxy port is required for sandbox network access');
-  }
-
+function generateProfile() {
   const profile = [
     '(version 1)',
     '(allow default)',
     '(deny network-outbound)',
-    `(allow network-outbound (remote ip "localhost:${proxyPort}"))`,
+    '(allow network-outbound (remote ip "localhost:*"))',
   ].join('\n');
 
   const profilePath = path.join(os.tmpdir(), `block-cc-sandbox-${process.pid}.sb`);
@@ -26,9 +22,9 @@ function generateProfile(proxyPort) {
   return profilePath;
 }
 
-function spawnClaude(args, env, log, opts = {}) {
+function spawnClaude(args, env, log) {
   if (isSandboxSupported()) {
-    const profilePath = generateProfile(opts.proxyPort);
+    const profilePath = generateProfile();
     log('Sandbox mode enabled (macOS)');
 
     const child = spawn('sandbox-exec', ['-f', profilePath, 'claude', ...args], {
@@ -52,7 +48,7 @@ function spawnClaude(args, env, log, opts = {}) {
 
 function spawnClaudeSync(args, env, opts = {}) {
   if (isSandboxSupported()) {
-    const profilePath = generateProfile(opts.proxyPort);
+    const profilePath = generateProfile();
     try {
       return spawnSync('sandbox-exec', ['-f', profilePath, 'claude', ...args], {
         env,

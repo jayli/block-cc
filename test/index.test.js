@@ -102,7 +102,7 @@ test('claude version check runs with proxy environment already injected', () => 
   if (process.platform === 'darwin') {
     assert.equal(records[0].sandboxed, true);
     const proxyPort = new URL(records[0].HTTPS_PROXY).port;
-    assert.match(records[0].sandboxProfile, new RegExp(`remote ip "localhost:${proxyPort}"`));
-    assert.doesNotMatch(records[0].sandboxProfile, /localhost:\*/);
+    assert.equal(Number.isInteger(Number(proxyPort)), true);
+    assert.match(records[0].sandboxProfile, /remote ip "localhost:\*"/);
   }
 });

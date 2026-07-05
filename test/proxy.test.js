@@ -218,8 +218,8 @@ test('MITM returns blocked for api.anthropic.com v1 requests', async () => {
     assert.match(response, /^HTTP\/1\.1 403 Forbidden/);
     assert.equal(response.split('\r\n\r\n').at(-1), 'blocked');
     assert.deepEqual(logs, [
-      'MITM: api.anthropic.com:443',
-      'Blocked API request: api.anthropic.com:443/v1/messages',
+      'MITM: api.anthropic.com:443 path=CONNECT',
+      'Blocked API request: api.anthropic.com:443 path=/v1/messages',
     ]);
   } finally {
     proxy.close();
@@ -247,8 +247,8 @@ test('MITM blocks api.anthropic.com event logging requests', async () => {
     assert.match(response, /^HTTP\/1\.1 204 No Content/);
     assert.equal(response.split('\r\n\r\n').at(-1), '');
     assert.deepEqual(logs, [
-      'MITM: api.anthropic.com:443',
-      'Blocked event logging request: api.anthropic.com:443/api/event_logging/v2/batch',
+      'MITM: api.anthropic.com:443 path=CONNECT',
+      'Blocked event logging request: api.anthropic.com:443 path=/api/event_logging/v2/batch',
     ]);
   } finally {
     proxy.close();
@@ -276,8 +276,8 @@ test('MITM blocks api.anthropic.com event logging requests with query params', a
     assert.match(response, /^HTTP\/1\.1 204 No Content/);
     assert.equal(response.split('\r\n\r\n').at(-1), '');
     assert.deepEqual(logs, [
-      'MITM: api.anthropic.com:443',
-      'Blocked event logging request: api.anthropic.com:443/api/event_logging/v2/batch?client=claude-code',
+      'MITM: api.anthropic.com:443 path=CONNECT',
+      'Blocked event logging request: api.anthropic.com:443 path=/api/event_logging/v2/batch?client=claude-code',
     ]);
   } finally {
     proxy.close();
@@ -299,8 +299,8 @@ for (const hostname of ['claude.ai', 'api.anthropic.com']) {
     try {
       await fetchDomainInfoViaProxy(proxy, hostname, cert);
       assert.deepEqual(logs, [
-        `MITM: ${hostname}:443`,
-        'Faked domain check: b.consolelog.work',
+        `MITM: ${hostname}:443 path=CONNECT`,
+        'Faked domain check: b.consolelog.work path=/api/web/domain_info?domain=b.consolelog.work',
       ]);
     } finally {
       proxy.close();
@@ -334,8 +334,8 @@ test('MITM fakes domain_info for absolute-form request targets', async () => {
       can_fetch: true,
     });
     assert.deepEqual(logs, [
-      'MITM: claude.ai:443',
-      'Faked domain check: b.consolelog.work',
+      'MITM: claude.ai:443 path=CONNECT',
+      'Faked domain check: b.consolelog.work path=/api/web/domain_info?domain=b.consolelog.work',
     ]);
   } finally {
     proxy.close();
@@ -361,8 +361,8 @@ test('MITM closes oversized headers without hanging', async () => {
     );
     await waitForSocketClose(tlsSocket);
     assert.deepEqual(logs, [
-      'MITM: claude.ai:443',
-      'Blocked oversized MITM header: claude.ai:443',
+      'MITM: claude.ai:443 path=CONNECT',
+      'Blocked oversized MITM header: claude.ai:443 path=unknown',
     ]);
   } finally {
     proxy.close();
@@ -386,8 +386,8 @@ test('MITM closes incomplete headers after timeout', async () => {
     tlsSocket.write('GET /api/web/domain_info?domain=b.consolelog.work HTTP/1.1\r\n');
     await waitForSocketClose(tlsSocket);
     assert.deepEqual(logs, [
-      'MITM: claude.ai:443',
-      'Blocked incomplete MITM header: claude.ai:443',
+      'MITM: claude.ai:443 path=CONNECT',
+      'Blocked incomplete MITM header: claude.ai:443 path=unknown',
     ]);
   } finally {
     proxy.close();
@@ -410,8 +410,8 @@ test('MITM fails closed for malformed request lines', async () => {
     tlsSocket.write('BROKEN\r\nHost: claude.ai\r\n\r\n');
     await waitForSocketClose(tlsSocket);
     assert.deepEqual(logs, [
-      'MITM: claude.ai:443',
-      'Blocked malformed MITM request: claude.ai:443',
+      'MITM: claude.ai:443 path=CONNECT',
+      'Blocked malformed MITM request: claude.ai:443 path=unknown',
     ]);
   } finally {
     proxy.close();
