@@ -28,7 +28,15 @@ npx block-cc claude -c          # 等同于 claude -c
 
 **第一层：环境变量关闭** — 注入开关（只做最小注入），从应用层禁用更新和反馈：
 
+```
+DISABLE_AUTOUPDATER=1
+CLAUDE_CODE_DISABLE_UPDATE_CHECK=1
+CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
+```
+
 **第二层：网络代理拦截** — 启动本地 HTTP CONNECT 代理，在 TLS 握手之前阻断必要的域名。
+
+代理和环境变量均仅作用于 Claude Code 进程，不影响浏览器或其他应用。
 
 保险起见，中转站域名也屏蔽掉了。
 
@@ -37,20 +45,12 @@ npx block-cc claude -c          # 等同于 claude -c
 - `claude.ai` → 功能性请求全部伪造，不离开本机
 - `claude.ai` → 其他非功能性所有请求都阻断
 
-**第四层：扫尾** - 剩下从 cc 发出去的所有 tcp 普通请求、隧道、udp 请求一律阻断：
+**第四层：离线扫描** - 定时离线扫描，只有更新版的 cc 完全没有 tcp 隧道直连和 udp 请求时，才允许通过。
 
-实测没有发现 cc 有私自创建 tcp 隧道，打洞，非标 tcp 和 udp 请求，为了确保万无一失，block-cc 将这些也都一概阻断。MacOS 下用的沙盒实现，Windows/Linux 下尚未实现（优先级不高）。
+目前实测没有发现 cc 有私自创建 tcp 隧道、打洞、非标 tcp 和 udp 请求，为了确保万无一失，block-cc 启动时会检查版本支持情况，如果存在疑似暗门的 cc 版本，直接跳过。
 
 
-```
-DISABLE_AUTOUPDATER=1
-CLAUDE_CODE_DISABLE_UPDATE_CHECK=1
-CLAUDE_CODE_DISABLE_FEEDBACK_SURVEY=1
-```
-
-代理和环境变量均仅作用于 Claude Code 进程，不影响浏览器或其他应用。
-
-## 要求
+## 环境要求
 
 - Node.js >= 18
 - Claude Code 已安装
