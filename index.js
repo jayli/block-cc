@@ -8,6 +8,7 @@ const net = require('net');
 const { createProxy } = require('./proxy');
 const { setupCA, getSecureContext } = require('./cert');
 const { spawnClaude, spawnClaudeSync } = require('./sandbox');
+const { checkVersion } = require('./version-check');
 
 const USAGE = 'Usage: npx block-cc claude';
 
@@ -162,7 +163,7 @@ function buildClaudeEnv({ baseEnv, proxyUrl, caCertPath }) {
   return env;
 }
 
-function main() {
+async function main() {
   const args = process.argv.slice(2);
 
   if (args[0] === 'ssh-proxy') {
@@ -176,6 +177,8 @@ function main() {
   }
 
   const log = createLogger();
+
+  await checkVersion(log);
 
   let caCertPath;
   try {
@@ -229,7 +232,10 @@ function main() {
 }
 
 if (require.main === module) {
-  main();
+  main().catch((err) => {
+    console.error(`block-cc fatal error: ${err.message}`);
+    process.exit(1);
+  });
 }
 
 module.exports = { buildClaudeEnv, main };

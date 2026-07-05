@@ -109,18 +109,27 @@ test('claude version check runs with proxy environment already injected', () => 
   fs.mkdirSync(binDir);
   fs.mkdirSync(homeDir);
 
+  // Pre-cache max-version so version check passes without network
+  const cacheDir = path.join(homeDir, '.config', 'block-cc');
+  fs.mkdirSync(cacheDir, { recursive: true });
+  fs.writeFileSync(path.join(cacheDir, 'max-version'), '2.1.201\n');
+
   const fakeClaude = path.join(binDir, 'claude');
   fs.writeFileSync(fakeClaude, [
     '#!/usr/bin/env node',
     "'use strict';",
     "const fs = require('fs');",
-    'fs.appendFileSync(process.env.BLOCK_CC_TEST_ENV_LOG, JSON.stringify({',
-    '  argv: process.argv.slice(2),',
-    '  HTTPS_PROXY: process.env.HTTPS_PROXY,',
-    '  NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,',
-    '  sandboxed: process.env.BLOCK_CC_TEST_SANDBOXED === "1",',
-    '  sandboxProfile: process.env.BLOCK_CC_TEST_SANDBOX_PROFILE,',
-    '}) + "\\n");',
+    'const argv = process.argv.slice(2);',
+    'if (process.env.BLOCK_CC_TEST_ENV_LOG) {',
+    '  fs.appendFileSync(process.env.BLOCK_CC_TEST_ENV_LOG, JSON.stringify({',
+    '    argv: argv,',
+    '    HTTPS_PROXY: process.env.HTTPS_PROXY,',
+    '    NODE_EXTRA_CA_CERTS: process.env.NODE_EXTRA_CA_CERTS,',
+    '    sandboxed: process.env.BLOCK_CC_TEST_SANDBOXED === "1",',
+    '    sandboxProfile: process.env.BLOCK_CC_TEST_SANDBOX_PROFILE,',
+    '  }) + "\\n");',
+    '}',
+    "console.log('Claude Code v2.1.200');",
     'process.exit(0);',
     '',
   ].join('\n'));
@@ -165,13 +174,16 @@ test('claude version check runs with proxy environment already injected', () => 
 
   assert.equal(result.status, 0, result.stderr || result.stdout);
   const records = fs.readFileSync(logPath, 'utf8').trim().split('\n').map((line) => JSON.parse(line));
+  // First record: version check call (no proxy env)
   assert.deepEqual(records[0].argv, ['--version']);
-  assert.match(records[0].HTTPS_PROXY, /^http:\/\/127\.0\.0\.1:\d+$/);
-  assert.match(records[0].NODE_EXTRA_CA_CERTS, /ca\.crt$/);
+  // Second record: checkClaude call (with proxy env injected)
+  assert.deepEqual(records[1].argv, ['--version']);
+  assert.match(records[1].HTTPS_PROXY, /^http:\/\/127\.0\.0\.1:\d+$/);
+  assert.match(records[1].NODE_EXTRA_CA_CERTS, /ca\.crt$/);
   if (process.platform === 'darwin') {
-    assert.equal(records[0].sandboxed, true);
-    const proxyPort = new URL(records[0].HTTPS_PROXY).port;
+    assert.equal(records[1].sandboxed, true);
+    const proxyPort = new URL(records[1].HTTPS_PROXY).port;
     assert.equal(Number.isInteger(Number(proxyPort)), true);
-    assert.match(records[0].sandboxProfile, /remote ip "localhost:\*"/);
+    assert.match(records[1].sandboxProfile, /remote ip "localhost:\*"/);
   }
 });
