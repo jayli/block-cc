@@ -62,21 +62,6 @@ function getLocalClaudeVersion() {
 }
 
 async function checkVersion(log) {
-  let remoteVersion;
-  try {
-    remoteVersion = await fetchRemoteVersion();
-    cacheVersion(remoteVersion);
-    log(`Fetched remote max-version: ${remoteVersion}`);
-  } catch (err) {
-    remoteVersion = getCachedVersion();
-    if (!remoteVersion) {
-      log(`Version check failed: no remote or cached version (${err.message})`);
-      console.error('无法获取远端版本信息且本地无缓存，请检查网络连接。');
-      process.exit(1);
-    }
-    log(`Using cached max-version: ${remoteVersion}`);
-  }
-
   const localVersion = getLocalClaudeVersion();
   if (!localVersion) {
     log('Failed to get local Claude Code version');
@@ -85,35 +70,33 @@ async function checkVersion(log) {
   }
   log(`Local Claude Code version: ${localVersion}`);
 
-  const localNum = parseVersion(localVersion);
-  const remoteNum = parseVersion(remoteVersion);
+  const cachedVersion = getCachedVersion();
+  if (!cachedVersion) {
+    log('No cached max-version; skipping version check, will update in background');
+  } else {
+    log(`Cached max-version: ${cachedVersion}`);
+    const localNum = parseVersion(localVersion);
+    const cachedNum = parseVersion(cachedVersion);
 
-  if (localNum <= remoteNum) {
-    log(`Version check passed: ${localVersion} <= ${remoteVersion}`);
-    return;
+    if (localNum > cachedNum) {
+      log(`Version check failed: ${localVersion} > ${cachedVersion}`);
+      console.error(`当前 Claude Code 版本 (${localVersion}) 不被 block-cc 支持。`);
+      console.error(`block-cc 支持的最高版本为 ${cachedVersion}。`);
+      console.error('请等待 block-cc 更新后重试，或降级 Claude Code。');
+      process.exit(1);
+    }
+    log(`Version check passed: ${localVersion} <= ${cachedVersion}`);
   }
 
-  log(`Local version ${localVersion} > remote ${remoteVersion}, re-fetching...`);
-
-  try {
-    remoteVersion = await fetchRemoteVersion();
-    cacheVersion(remoteVersion);
-    log(`Re-fetched remote max-version: ${remoteVersion}`);
-  } catch (err) {
-    log(`Re-fetch failed: ${err.message}, using previous version`);
-  }
-
-  const newRemoteNum = parseVersion(remoteVersion);
-  if (localNum <= newRemoteNum) {
-    log(`Version check passed after re-fetch: ${localVersion} <= ${remoteVersion}`);
-    return;
-  }
-
-  log(`Version check failed: ${localVersion} > ${remoteVersion}`);
-  console.error(`当前 Claude Code 版本 (${localVersion}) 不被 block-cc 支持。`);
-  console.error(`block-cc 支持的最高版本为 ${remoteVersion}。`);
-  console.error('请等待 block-cc 更新后重试，或降级 Claude Code。');
-  process.exit(1);
+  // Background async update — fire-and-forget, next startup sees new cache
+  fetchRemoteVersion()
+    .then((remoteVersion) => {
+      cacheVersion(remoteVersion);
+      log(`Background updated max-version to ${remoteVersion}`);
+    })
+    .catch((err) => {
+      log(`Background version update failed: ${err.message}`);
+    });
 }
 
 module.exports = { checkVersion };
