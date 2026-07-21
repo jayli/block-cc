@@ -8,7 +8,7 @@ const path = require('path');
 const net = require('net');
 const { spawn, spawnSync } = require('child_process');
 
-const { buildClaudeEnv } = require('../index');
+const { buildClaudeEnv, parseCliArgs } = require('../index');
 const { SANDBOX_ENABLE, isSandboxSupported } = require('../sandbox');
 
 function once(emitter, event) {
@@ -54,6 +54,14 @@ test('buildClaudeEnv preserves existing Git SSH command', () => {
   });
 
   assert.equal(env.GIT_SSH_COMMAND, 'ssh -i /tmp/custom-key');
+});
+
+test('parseCliArgs accepts upstream proxy before claude and preserves claude args', () => {
+  assert.deepEqual(parseCliArgs(['-x', 'http://127.0.0.1:1087', 'claude', '--print', 'hi']), {
+    command: 'claude',
+    upstreamProxyUrl: 'http://127.0.0.1:1087/',
+    claudeArgs: ['--print', 'hi'],
+  });
 });
 
 test('sandbox is disabled by default', () => {

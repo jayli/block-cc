@@ -217,11 +217,93 @@ function formatMitmLog(message, reqPath) {
   return `${message} path=${reqPath || 'unknown'}`;
 }
 
+function buildConnectRequest(host, port, upstreamProxy) {
+  const lines = [
+    `CONNECT ${host}:${port} HTTP/1.1`,
+    `Host: ${host}:${port}`,
+  ];
+
+  if (upstreamProxy && (upstreamProxy.username || upstreamProxy.password)) {
+    const username = decodeURIComponent(upstreamProxy.username);
+    const password = decodeURIComponent(upstreamProxy.password);
+    const credentials = Buffer.from(`${username}:${password}`).toString('base64');
+    lines.push(`Proxy-Authorization: Basic ${credentials}`);
+  }
+
+  return lines.join('\r\n') + '\r\n\r\n';
+}
+
+function tunnelThroughSocket({ clientSocket, targetSocket, head }) {
+  clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+  if (head && head.length > 0) {
+    targetSocket.write(head);
+  }
+  clientSocket.pipe(targetSocket);
+  targetSocket.pipe(clientSocket);
+}
+
+function connectDirect({ host, port, clientSocket, head }) {
+  const targetSocket = net.connect(port, host, () => {
+    tunnelThroughSocket({ clientSocket, targetSocket, head });
+  });
+
+  targetSocket.on('error', () => {
+    clientSocket.destroy();
+  });
+
+  clientSocket.on('error', () => {
+    targetSocket.destroy();
+  });
+}
+
+function connectViaUpstream({ host, port, clientSocket, head, upstreamProxy }) {
+  const upstreamSocket = net.connect(Number(upstreamProxy.port || 80), upstreamProxy.hostname, () => {
+    upstreamSocket.write(buildConnectRequest(host, port, upstreamProxy));
+  });
+
+  let buffer = Buffer.alloc(0);
+  let connected = false;
+
+  upstreamSocket.on('data', (chunk) => {
+    if (connected) return;
+    buffer = Buffer.concat([buffer, chunk]);
+
+    const headerEnd = buffer.indexOf('\r\n\r\n');
+    if (headerEnd === -1) return;
+
+    const header = buffer.subarray(0, headerEnd).toString();
+    const rest = buffer.subarray(headerEnd + 4);
+    const statusLine = header.split('\r\n')[0] || '';
+
+    if (!/^HTTP\/1\.[01] 2\d\d\b/.test(statusLine)) {
+      clientSocket.destroy();
+      upstreamSocket.destroy();
+      return;
+    }
+
+    connected = true;
+    upstreamSocket.removeAllListeners('data');
+    tunnelThroughSocket({ clientSocket, targetSocket: upstreamSocket, head });
+    if (rest.length > 0) {
+      clientSocket.write(rest);
+    }
+  });
+
+  upstreamSocket.on('error', () => {
+    clientSocket.destroy();
+  });
+
+  clientSocket.on('error', () => {
+    upstreamSocket.destroy();
+  });
+}
+
 function createProxy(opts) {
   const log = (opts && opts.log) || (() => {});
   const getSecureContext = (opts && opts.getSecureContext) || (() => { throw new Error('secureContext not configured'); });
   const headerTimeoutMs = (opts && opts.headerTimeoutMs) || DEFAULT_HEADER_TIMEOUT_MS;
   const maxHeaderBytes = (opts && opts.maxHeaderBytes) || DEFAULT_MAX_HEADER_BYTES;
+  const upstreamProxy = opts && opts.upstreamProxyUrl ? new URL(opts.upstreamProxyUrl) : null;
   const server = http.createServer();
 
   server.on('connect', (req, clientSocket, head) => {
@@ -330,21 +412,13 @@ function createProxy(opts) {
       return;
     }
 
-    log(`Tunnel: ${host}:${port}`);
-    const targetSocket = net.connect(port, host, () => {
-      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-      targetSocket.write(head);
-      clientSocket.pipe(targetSocket);
-      targetSocket.pipe(clientSocket);
-    });
-
-    targetSocket.on('error', () => {
-      clientSocket.destroy();
-    });
-
-    clientSocket.on('error', () => {
-      targetSocket.destroy();
-    });
+    if (upstreamProxy) {
+      log(`Tunnel via upstream: ${host}:${port}`);
+      connectViaUpstream({ host, port, clientSocket, head, upstreamProxy });
+    } else {
+      log(`Tunnel: ${host}:${port}`);
+      connectDirect({ host, port, clientSocket, head });
+    }
   });
 
   return server;

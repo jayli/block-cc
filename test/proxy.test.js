@@ -197,6 +197,57 @@ test('blocks statsig.anthropic.com', () => {
   assert.equal(shouldBlock('statsig.anthropic.com'), true);
 });
 
+test('tunnels allowed CONNECT requests through configured upstream HTTP proxy', async () => {
+  let upstreamRequest = '';
+  const upstream = net.createServer((socket) => {
+    socket.once('data', (chunk) => {
+      upstreamRequest = chunk.toString();
+      socket.write('HTTP/1.1 200 Connection Established\r\n\r\nfrom-upstream');
+      socket.end();
+    });
+  });
+
+  upstream.listen(0, '127.0.0.1');
+  await once(upstream, 'listening');
+
+  const logs = [];
+  const proxy = createProxy({
+    log: (msg) => logs.push(msg),
+    upstreamProxyUrl: `http://127.0.0.1:${upstream.address().port}`,
+  });
+
+  proxy.listen(0, '127.0.0.1');
+  await once(proxy, 'listening');
+
+  const socket = net.connect(proxy.address().port, '127.0.0.1');
+
+  try {
+    await once(socket, 'connect');
+    socket.write(
+      'CONNECT example.com:443 HTTP/1.1\r\n' +
+      'Host: example.com:443\r\n\r\n'
+    );
+
+    const response = await new Promise((resolve, reject) => {
+      let data = '';
+      socket.on('data', (chunk) => { data += chunk.toString(); });
+      socket.on('end', () => resolve(data));
+      socket.on('error', reject);
+    });
+
+    assert.match(response, /^HTTP\/1\.1 200 Connection Established\r\n\r\nfrom-upstream/);
+    assert.match(upstreamRequest, /^CONNECT example\.com:443 HTTP\/1\.1\r\n/);
+    assert.match(upstreamRequest, /Host: example\.com:443\r\n/);
+    assert.deepEqual(logs, [
+      'Tunnel via upstream: example.com:443',
+    ]);
+  } finally {
+    socket.destroy();
+    proxy.close();
+    upstream.close();
+  }
+});
+
 test('MITM returns blocked for api.anthropic.com v1 requests', async () => {
   const logs = [];
   const { cert, secureContext } = createSelfSignedContext('api.anthropic.com');

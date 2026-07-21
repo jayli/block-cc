@@ -10,7 +10,7 @@ const { setupCA, getSecureContext } = require('./cert');
 const { spawnClaude, spawnClaudeSync } = require('./sandbox');
 const { checkVersion } = require('./version-check');
 
-const USAGE = 'Usage: npx block-cc claude';
+const USAGE = 'Usage: npx block-cc [-x http://127.0.0.1:1087] claude';
 
 const INSTALL_CMD = process.platform === 'win32'
   ? 'irm https://claude.ai/install.ps1 | iex'
@@ -134,6 +134,45 @@ function runSshProxy(args) {
   });
 }
 
+function normalizeHttpProxyUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch (_) {
+    throw new Error(`Invalid proxy URL: ${value}`);
+  }
+
+  if (url.protocol !== 'http:') {
+    throw new Error(`Only http proxy URLs are supported: ${value}`);
+  }
+
+  return url.href;
+}
+
+function parseCliArgs(args) {
+  let upstreamProxyUrl = '';
+  let index = 0;
+
+  if (args[index] === '-x') {
+    if (!args[index + 1]) {
+      throw new Error('-x requires an http proxy URL');
+    }
+    upstreamProxyUrl = normalizeHttpProxyUrl(args[index + 1]);
+    index += 2;
+  }
+
+  const command = args[index];
+  if (command !== 'claude') {
+    return { command, upstreamProxyUrl, claudeArgs: [] };
+  }
+
+  return {
+    command,
+    upstreamProxyUrl,
+    claudeArgs: args.slice(index + 1),
+  };
+}
+
 function buildClaudeEnv({ baseEnv, proxyUrl, caCertPath }) {
   const existingCerts = baseEnv.NODE_EXTRA_CA_CERTS || '';
 
@@ -171,7 +210,16 @@ async function main() {
     return;
   }
 
-  if (args[0] !== 'claude') {
+  let parsed;
+  try {
+    parsed = parseCliArgs(args);
+  } catch (err) {
+    console.error(err.message);
+    console.error(USAGE);
+    process.exit(1);
+  }
+
+  if (parsed.command !== 'claude') {
     console.error(USAGE);
     process.exit(1);
   }
@@ -199,7 +247,11 @@ async function main() {
     return secureContexts[hostname];
   }
 
-  const proxy = createProxy({ log, getSecureContext: getContext });
+  const proxy = createProxy({
+    log,
+    getSecureContext: getContext,
+    upstreamProxyUrl: parsed.upstreamProxyUrl,
+  });
 
   proxy.on('error', (err) => {
     log(`Proxy error: ${err.message}`);
@@ -213,7 +265,7 @@ async function main() {
 
     checkClaude(env);
 
-    const claude = spawnClaude(args.slice(1), env, log);
+    const claude = spawnClaude(parsed.claudeArgs, env, log);
 
     claude.on('error', (err) => {
       log(`Claude spawn failed: ${err.message}`);
@@ -238,4 +290,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { buildClaudeEnv, main };
+module.exports = { buildClaudeEnv, main, parseCliArgs };
