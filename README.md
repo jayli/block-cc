@@ -22,6 +22,12 @@ Claude Code 的所有额外参数会透传，比如：
 npx block-cc claude -c          # 等同于 claude -c
 ```
 
+## 配置下游 HTTP 代理
+
+```bash
+npx block-cc -x http://127.0.0.1:1087 claude
+```
+
 ## 原理
 
 四层拦截，确保万无一失：
@@ -90,6 +96,14 @@ block-cc claude
 ```
 claude() {
   nocorrect npx block-cc claude "$@"
+}
+```
+
+如果你固定要走下游代理，可以写成：
+
+```
+claude() {
+  nocorrect npx block-cc -x http://127.0.0.1:1087 claude "$@"
 }
 ```
 
