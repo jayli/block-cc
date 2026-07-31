@@ -1,6 +1,7 @@
 'use strict';
 
 const http = require('http');
+const { request: httpRequest } = require('http');
 const net = require('net');
 const tls = require('tls');
 const { URL } = require('url');
@@ -298,6 +299,58 @@ function connectViaUpstream({ host, port, clientSocket, head, upstreamProxy }) {
   });
 }
 
+function forwardHttpRequest(req, clientRes, log) {
+  let target;
+  try {
+    target = new URL(req.url);
+  } catch (_) {
+    clientRes.writeHead(400, { 'Content-Type': 'text/plain', 'Connection': 'close' });
+    clientRes.end('Bad Request');
+    return;
+  }
+
+  if (target.protocol !== 'http:') {
+    clientRes.writeHead(400, { 'Content-Type': 'text/plain', 'Connection': 'close' });
+    clientRes.end('Bad Request');
+    return;
+  }
+
+  const host = target.hostname;
+  const port = target.port || 80;
+
+  if (shouldBlock(host)) {
+    log(`Blocked: ${host}:${port}`);
+    clientRes.writeHead(403, { 'Content-Type': 'text/plain', 'Connection': 'close' });
+    clientRes.end('blocked');
+    return;
+  }
+
+  log(`Forward HTTP: ${host}:${port}${target.pathname}${target.search}`);
+
+  const headers = Object.assign({}, req.headers);
+  delete headers['proxy-connection'];
+
+  const proxyReq = httpRequest({
+    hostname: host,
+    port: Number(port),
+    method: req.method,
+    path: `${target.pathname}${target.search}`,
+    headers,
+  }, (proxyRes) => {
+    clientRes.writeHead(proxyRes.statusCode, proxyRes.headers);
+    proxyRes.pipe(clientRes);
+  });
+
+  proxyReq.on('error', () => {
+    if (!clientRes.headersSent) {
+      clientRes.writeHead(502, { 'Content-Type': 'text/plain', 'Connection': 'close' });
+    }
+    clientRes.end('Bad Gateway');
+  });
+
+  req.pipe(proxyReq);
+}
+
 function createProxy(opts) {
   const log = (opts && opts.log) || (() => {});
   const getSecureContext = (opts && opts.getSecureContext) || (() => { throw new Error('secureContext not configured'); });
@@ -305,6 +358,10 @@ function createProxy(opts) {
   const maxHeaderBytes = (opts && opts.maxHeaderBytes) || DEFAULT_MAX_HEADER_BYTES;
   const upstreamProxy = opts && opts.upstreamProxyUrl ? new URL(opts.upstreamProxyUrl) : null;
   const server = http.createServer();
+
+  server.on('request', (req, res) => {
+    forwardHttpRequest(req, res, log);
+  });
 
   server.on('connect', (req, clientSocket, head) => {
     const [host, portStr] = req.url.split(':');
